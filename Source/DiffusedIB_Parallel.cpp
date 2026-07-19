@@ -78,7 +78,7 @@ Real nodal_phi_to_heavi(Real phi)
 
 void nodal_phi_to_pvf(MultiFab& pvf, const MultiFab& phi_nodal)
 {
-
+    BL_PROFILE("DiffusedIB::nodal_phi_to_pvf");
     // Print() << "In the nodal_phi_to_pvf\n";
 
     pvf.setVal(0.0);
@@ -123,6 +123,7 @@ void nodal_phi_to_pvf(MultiFab& pvf, const MultiFab& phi_nodal)
 // approximation that is deliberately left unnormalised). Any other value aborts.
 void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
 {
+    BL_PROFILE("DiffusedIB::calculate_phi_nodal");
     phi_nodal.setVal(0.0);
 
     Real Xp = current_kernel.location[0];
@@ -341,6 +342,8 @@ void mParticle::InteractWithEuler(MultiFab &EulerVel,
                                   MultiFab &EulerForce,
                                   Real dt)
 {
+    BL_PROFILE("mParticle::InteractWithEuler");
+    BL_PROFILE_VAR("mParticle::InteractWithEuler()", mParticle_InteractWithEuler);
     if (verbose) Print() << "[Particle] mParticle::InteractWithEuler\n";
     // clear time , start record
     spend_time = 0;
@@ -376,6 +379,7 @@ void mParticle::InteractWithEuler(MultiFab &EulerVel,
         VelocityCorrection(EulerVel, EulerForce, dt);
         loop--;
     }
+    BL_PROFILE_VAR_STOP(mParticle_InteractWithEuler);
     spend_time += ParallelDescriptor::second() - InteractWithEulerStart;
 }
 
@@ -592,6 +596,7 @@ void mParticle::syncKernelsToDevice ()
 }
 
 void mParticle::UpdateLagrangianMarker() {
+    BL_PROFILE("mParticle::UpdateLagrangianMarker");
     if (verbose) Print() << "\tmParticle::UpdateLagrangianMarker\n";
     // update lagrangian marker attributions
     for (mParIter pti(*mContainer, LOCAL_LEVEL); pti.isValid(); ++pti) {
@@ -733,6 +738,7 @@ void VelocityInterpolationRKPM_cir(
 void mParticle::VelocityInterpolation(MultiFab &EulerVel,
                                       int type)//
 {
+    BL_PROFILE("mParticle::VelocityInterpolation");
     if (verbose) Print() << "\tmParticle::VelocityInterpolation\n";
 
     //Print() << "euler_finest_level " << euler_finest_level << std::endl;
@@ -782,7 +788,7 @@ void mParticle::VelocityInterpolation(MultiFab &EulerVel,
 
 void mParticle::ComputeLagrangianForce(Real dt)
 {
-
+    BL_PROFILE("mParticle::ComputeLagrangianForce");
     if (verbose) Print() << "\tmParticle::ComputeLagrangianForce\n";
 
     for(mParIter pti( *mContainer, LOCAL_LEVEL); pti.isValid(); ++pti){
@@ -931,6 +937,7 @@ void ForceSpreadingRKPM_cir(
 void mParticle::ForceSpreading(MultiFab & EulerForce,
                                int type)
 {
+    BL_PROFILE("mParticle::ForceSpreading");
     if (verbose) Print() << "\tmParticle::ForceSpreading\n";
     const auto& gm = mContainer->GetParGDB()->Geom(LOCAL_LEVEL);
     auto plo = gm.ProbLoArray();
@@ -985,7 +992,7 @@ void mParticle::ForceSpreading(MultiFab & EulerForce,
 
     using pc = mParticleContainer::SuperParticleType;
     // particle id => thread id
-
+    BL_PROFILE_VAR("ForceSpreading::reduce_per_particle", blp_fsreduce);
     for (auto& cur_p : particle_kernels) { // gm position
         // https://github.com/AMReX-Codes/amrex/discussions/4593
         // ReduceOps<ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum> reduce_ops;
@@ -1059,12 +1066,13 @@ void mParticle::ForceSpreading(MultiFab & EulerForce,
         cur_p.ib_force += {Real(fx), Real(fy), Real(fz)};
         cur_p.ib_moment += {Real(mx), Real(my), Real(mz)};
     }
-
+    BL_PROFILE_VAR_STOP(blp_fsreduce);
     EulerForce.SumBoundary(ParticleProperties::euler_force_index, 3, gm.periodicity());
 }
 
 void mParticle::VelocityCorrection(MultiFab &Euler, MultiFab &EulerForce, Real dt) const
 {
+    BL_PROFILE("mParticle::VelocityCorrection");
     if(verbose) Print() << "\tmParticle::VelocityCorrection\n";
     MultiFab::Saxpy(Euler, dt, EulerForce, ParticleProperties::euler_force_index, ParticleProperties::euler_velocity_index, 3, 0); //VelocityCorrection
 }
@@ -1077,6 +1085,7 @@ void mParticle::UpdateParticles(int iStep,
                                 MultiFab& pvf,
                                 Real dt)
 {
+    BL_PROFILE("mParticle::UpdateParticles");
     if (verbose) Print() << "mParticle::UpdateParticles\n";
     // start record
     auto UpdateParticlesStart = ParallelDescriptor::second();
@@ -1086,7 +1095,7 @@ void mParticle::UpdateParticles(int iStep,
 
     MultiFab AllParticlePVF(pvf.boxArray(), pvf.DistributionMap(), pvf.nComp(), pvf.nGrow());
     AllParticlePVF.setVal(0.0);
-
+    BL_PROFILE_VAR("UpdateParticles::phi_pvf_per_particle", blp_phipvf);
     //continue condition 6DOF
     for(auto& kernel : particle_kernels){
 
@@ -1194,6 +1203,7 @@ void mParticle::UpdateParticles(int iStep,
         RecordOldValue(kernel);
         MultiFab::Add(AllParticlePVF, pvf, 0, 0, 1, 0); // do not copy ghost cell values
     }
+    BL_PROFILE_VAR_STOP(blp_phipvf);
     // calculate the pvf based on the information of all particles
     MultiFab::Copy(pvf, AllParticlePVF, 0, 0, 1, pvf.nGrow());
 
