@@ -1,0 +1,25 @@
+# Result data stays on NERSC and never enters git.  What is tracked is the
+# lightweight record of a run: inputs, GNUmakefile, job scripts, plot.py, and
+# the comparison figure it produces.
+
+# solver output
+IB_Particle_*.csv
+mass.txt
+plt*/
+chk*/
+particle[0-9]*
+*.log
+*.out
+
+# build products
+tmp_build_dir/
+*.ex
+*.o
+*.d
+
+__pycache__/
+*.pyc
+
+# Tracked on purpose (git only needs to be told when a rule above would have
+# caught them):
+!*.png
