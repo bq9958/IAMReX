@@ -283,8 +283,11 @@ def main():
                        fmt="none", ecolor=C_PRESENT, elinewidth=1.2, capsize=3,
                        zorder=4)
 
+    # Re spans a decade or more, so x stays logarithmic.  Cd is on a linear
+    # axis anchored at zero: it is a magnitude, and a linear axis that does not
+    # include the origin would visually exaggerate the gap to Schiller-Naumann.
     ax_cd.set_xscale("log")
-    ax_cd.set_yscale("log")
+    ax_cd.set_ylim(bottom=0)
     ax_cd.set_xlabel(r"$Re_p = U D_p / \nu$")
     ax_cd.set_ylabel(r"$C_D$")
     ax_cd.set_title("Drag coefficient", loc="left")
