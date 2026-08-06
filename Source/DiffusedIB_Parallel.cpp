@@ -54,6 +54,7 @@ namespace ParticleProperties{
     int start_step{-1};
     int collision_model{0};
     int delta_type{1};
+    int reduce_method{0};  // 0 = original ReduceSum loop, 1 = ParticleReduce 6-tuple + packed all-reduce
 
     int write_freq{1};
     bool init_particle_from_file{false};
@@ -930,78 +931,109 @@ void mParticle::ForceSpreading(MultiFab & EulerForce,
     using pc = mParticleContainer::SuperParticleType;
     // particle id => thread id
     BL_PROFILE_VAR("ForceSpreading::reduce_per_particle", blp_fsreduce);
-    for (auto& cur_p : particle_kernels) { // gm position
-        // https://github.com/AMReX-Codes/amrex/discussions/4593
-        // ReduceOps<ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum, ReduceOpSum> reduce_ops;
-        // auto r = ParticleReduce<ReduceData<Real, Real, Real, Real, Real, Real>> (
-        //     *mContainer, [=] AMREX_GPU_DEVICE (const pc& p) -> GpuTuple<Real, Real, Real, Real, Real, Real> {
-        //         if (p.idata(M_ID) == cur_p.id) {
-        //             return {
-        //                 p.rdata(P_ATTR_REAL::Fx_Marker),
-        //                 p.rdata(P_ATTR_REAL::Fy_Marker),
-        //                 p.rdata(P_ATTR_REAL::Fz_Marker),
-        //                 p.rdata(P_ATTR_REAL::Mx_Marker),
-        //                 p.rdata(P_ATTR_REAL::My_Marker),
-        //                 p.rdata(P_ATTR_REAL::Mz_Marker)
-        //             };
-        //         }
-        //     return {0,0,0,0,0,0};
-        //     }, reduce_ops
-        // );
-        //
-        // auto fx = get<0>(r);
-        // auto fy = get<1>(r);
-        // auto fz = get<2>(r);
-        // auto mx = get<3>(r);
-        // auto my = get<4>(r);
-        // auto mz = get<5>(r);
 
-        auto fx = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::Fx_Marker);
-            }
-            return 0.;
-        });
-        auto fy = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::Fy_Marker);
-            }
-            return 0.;
-        });
-        auto fz = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::Fz_Marker);
-            }
-            return 0.;
-        });
-        auto mx = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::Mx_Marker);
-            }
-            return 0.;
-        });
-        auto my = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::My_Marker);
-            }
-            return 0.;
-        });
-        auto mz = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
-            if (p.idata(M_ID) == cur_p.id) {
-                return p.rdata(P_ATTR_REAL::Mz_Marker);
-            }
-            return 0.;
-        });
+    if (ParticleProperties::reduce_method == 1) {
+        static bool printed_once = false;
+        if (!printed_once) {
+            printed_once = true;
+            amrex::Print() << "[Particle] : reduce_method = 1 : optimized ParticleReduce (6-tuple) + packed all-reduce in use\n";
+        }
+        // ===== optimized: one 6-tuple ParticleReduce per kernel (1 scan per
+        // ===== particle instead of 6), then one packed MPI all-reduce (6N -> 1).
+        // Note: ParticleReduce returns per-rank partial sums only, so the packed
+        // all-reduce below is required. See https://github.com/AMReX-Codes/amrex/discussions/4593
+        const int nkern = particle_kernels.size();
+        Vector<Real> ib_fm(6 * nkern, 0.0);
+        ReduceOps<ReduceOpSum, ReduceOpSum, ReduceOpSum,
+                  ReduceOpSum, ReduceOpSum, ReduceOpSum> reduce_ops;
+        for (int k = 0; k < nkern; ++k) {
+            const int pid = particle_kernels[k].id;
+            auto r = ParticleReduce<ReduceData<Real, Real, Real, Real, Real, Real>> (
+                *mContainer, [=] AMREX_GPU_DEVICE (const pc& p) noexcept
+                    -> GpuTuple<Real, Real, Real, Real, Real, Real>
+                {
+                    if (p.idata(M_ID) == pid) {
+                        return {
+                            p.rdata(P_ATTR_REAL::Fx_Marker),
+                            p.rdata(P_ATTR_REAL::Fy_Marker),
+                            p.rdata(P_ATTR_REAL::Fz_Marker),
+                            p.rdata(P_ATTR_REAL::Mx_Marker),
+                            p.rdata(P_ATTR_REAL::My_Marker),
+                            p.rdata(P_ATTR_REAL::Mz_Marker)
+                        };
+                    }
+                    return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+                }, reduce_ops);
 
-        ParallelAllReduce::Sum(fx, ParallelDescriptor::Communicator());
-        ParallelAllReduce::Sum(fy, ParallelDescriptor::Communicator());
-        ParallelAllReduce::Sum(fz, ParallelDescriptor::Communicator());
-        ParallelAllReduce::Sum(mx, ParallelDescriptor::Communicator());
-        ParallelAllReduce::Sum(my, ParallelDescriptor::Communicator());
-        ParallelAllReduce::Sum(mz, ParallelDescriptor::Communicator());
+            ib_fm[6*k+0] = get<0>(r);
+            ib_fm[6*k+1] = get<1>(r);
+            ib_fm[6*k+2] = get<2>(r);
+            ib_fm[6*k+3] = get<3>(r);
+            ib_fm[6*k+4] = get<4>(r);
+            ib_fm[6*k+5] = get<5>(r);
+        }
+        ParallelAllReduce::Sum(ib_fm.data(), ib_fm.size(), ParallelDescriptor::Communicator());
+        for (int k = 0; k < nkern; ++k) {
+            particle_kernels[k].ib_force  += {ib_fm[6*k+0], ib_fm[6*k+1], ib_fm[6*k+2]};
+            particle_kernels[k].ib_moment += {ib_fm[6*k+3], ib_fm[6*k+4], ib_fm[6*k+5]};
+        }
+    } 
+    else
+    {
+        static bool printed_once = false;
+        if (!printed_once) {
+            printed_once = true;
+            amrex::Print() << "[Particle] : reduce_method = 0 : original ReduceSum loop in use\n";
+        }
+        // ===== original: 6 ReduceSum + 6 ParallelAllReduce per kernel =====
+        for (auto& cur_p : particle_kernels) { // gm position
+            auto fx = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::Fx_Marker);
+                }
+                return 0.;
+            });
+            auto fy = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::Fy_Marker);
+                }
+                return 0.;
+            });
+            auto fz = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::Fz_Marker);
+                }
+                return 0.;
+            });
+            auto mx = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::Mx_Marker);
+                }
+                return 0.;
+            });
+            auto my = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::My_Marker);
+                }
+                return 0.;
+            });
+            auto mz = ReduceSum(*mContainer, [=] AMREX_GPU_HOST_DEVICE(const pc& p) -> ParticleReal{
+                if (p.idata(M_ID) == cur_p.id) {
+                    return p.rdata(P_ATTR_REAL::Mz_Marker);
+                }
+                return 0.;
+            });
 
-        cur_p.ib_force += {Real(fx), Real(fy), Real(fz)};
-        cur_p.ib_moment += {Real(mx), Real(my), Real(mz)};
+            ParallelAllReduce::Sum(fx, ParallelDescriptor::Communicator());
+            ParallelAllReduce::Sum(fy, ParallelDescriptor::Communicator());
+            ParallelAllReduce::Sum(fz, ParallelDescriptor::Communicator());
+            ParallelAllReduce::Sum(mx, ParallelDescriptor::Communicator());
+            ParallelAllReduce::Sum(my, ParallelDescriptor::Communicator());
+            ParallelAllReduce::Sum(mz, ParallelDescriptor::Communicator());
+
+            cur_p.ib_force += {Real(fx), Real(fy), Real(fz)};
+            cur_p.ib_moment += {Real(mx), Real(my), Real(mz)};
+        }
     }
     BL_PROFILE_VAR_STOP(blp_fsreduce);
     EulerForce.SumBoundary(ParticleProperties::euler_force_index, 3, gm.periodicity());
@@ -1643,6 +1675,7 @@ void Particles::Initialize()
         p_file.query("collision_model", ParticleProperties::collision_model);
         p_file.query("write_freq",  ParticleProperties::write_freq);
         p_file.query("delta_type", ParticleProperties::delta_type);
+        p_file.query("reduce_method", ParticleProperties::reduce_method);
         // update with RKPM method
         p_file.query("RKPM", ParticleProperties::RKPM);
 
