@@ -138,6 +138,8 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
             );
         } else if (geometry_type == 2) {
             // Ellipsoid geometry
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(current_kernel.radius2 > 0.0 && current_kernel.radius3 > 0.0,
+                "geometry_type = 2 (ellipsoid) requires radius2 and radius3 to be set to positive values");
             Real b = current_kernel.radius2;  // semi-axis b
             Real c = current_kernel.radius3; // semi-axis c
             amrex::ParallelFor(bx, [=]
