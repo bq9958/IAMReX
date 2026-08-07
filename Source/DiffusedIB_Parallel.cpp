@@ -14,7 +14,7 @@
 #include <AMReX_FillPatchUtil.H>
 #include <iamr_constants.H>
 
-#include "DiffusedIB_Parallel.h"
+#include "DiffusedIB_Parallel.H"
 
 #include <filesystem>
 #include <sstream>

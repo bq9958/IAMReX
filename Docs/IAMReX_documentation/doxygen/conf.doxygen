@@ -899,7 +899,7 @@ WARN_LOGFILE           =
 # Note: If this tag is empty the current directory is searched.
 
 INPUT                  = \
-../../../Source/DiffusedIB_Parallel.h \
+../../../Source/DiffusedIB_Parallel.H \
 ../../../Source/Collision.H \
 ../../../Source/NavierStokes.H \
 ../../../Source/NavierStokesBase.H
