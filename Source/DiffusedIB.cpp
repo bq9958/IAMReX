@@ -181,7 +181,7 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
 
                 }
             );
-        } else if (geometry_type > 2) {
+        } else {
             amrex::Print() << "Particle (" << current_kernel.id << ") has unsupported geometry_type: " << geometry_type << "\n";
             amrex::Abort("Unsupported geometry type. Only geometry_type = 1 (sphere) and 2 (ellipsoid) are supported.");
         }

@@ -66,7 +66,7 @@ struct kernel{
     Real radius{0.0};
     Real radius2{0.0};
     Real radius3{0.0};
-    int geometry_type{1};  // 1 = sphere, 2 = ellipsoid, 3 = cylinder
+    int geometry_type{1};  // 1 = sphere, 2 = ellipsoid; any other value aborts
     Real rho{0.0};
     int ml{0};
     Real dv{0.0};
