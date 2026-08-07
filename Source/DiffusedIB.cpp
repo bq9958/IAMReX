@@ -103,6 +103,10 @@ void nodal_phi_to_pvf(MultiFab& pvf, const MultiFab& phi_nodal)
 
 }
 
+// Fill phi_nodal with the nodal level set of a single particle: negative inside
+// the body, positive outside. Handles geometry_type = 1 (sphere, signed distance
+// normalised by the radius) and geometry_type = 2 (ellipsoid, a first-order
+// approximation that is deliberately left unnormalised). Any other value aborts.
 void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
 {
     phi_nodal.setVal(0.0);
