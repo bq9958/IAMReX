@@ -23,7 +23,7 @@
 
 #ifdef AMREX_PARTICLES
 #ifdef PARTICLE_PARALLEL
-#include "DiffusedIB_Parallel.h"
+#include "DiffusedIB_Parallel.H"
 #else
 #include "DiffusedIB.H"
 #endif
