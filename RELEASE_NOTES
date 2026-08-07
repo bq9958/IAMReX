@@ -325,3 +325,26 @@ New flow past ellipsoid tutorial (Tutorials/Jang_E2830Re03p65).
 CI test matrix reduced from 9 cases to 3 for faster runs; codespell and code
   style fixes.
 JOSS paper and documentation updates.
+
+8/7/26
+Release v1.2 (August, 2026)
+Bug-fix and infrastructure release.
+calculate_phi_nodal now rejects unsupported geometry_type values. The dispatch
+  ended in "else if (geometry_type > 2)", so 0 and negative values matched no
+  branch: the level set stayed zero and the run continued with no diagnostic.
+Ellipsoid semi-axes are validated before use. radius2 and radius3 default to
+  zero, so geometry_type = 2 without both extra radii divided by zero and filled
+  the level set with inf and NaN.
+The ellipsoid level set no longer blows up at the particle centre, where the
+  vanishing denominator combined with the 1.e-12 guard produced -1.0e12 and
+  swamped the surrounding nodes in PRECISION=FLOAT builds.
+DiffusedIB_Parallel.h renamed to DiffusedIB_Parallel.H, matching Make.package
+  and the convention of every other header in Source.
+test_IAMReX now builds the three cases as a parallel matrix with ccache,
+  reducing wall clock from about 12 minutes to about 5.
+Style and codespell, failing on every push since June, are green again.
+Draft PDF no longer fails on tag pushes.
+Removed the inherited GCC, CUDA, HIP and SYCL workflows, which had never run
+  for IAMReX and referenced dependency scripts absent from this repository.
+Documentation updates: contact address, CONTRIBUTING, Test_IAMReX, RKPM tutorial
+  and Tutorials_profiling READMEs.
