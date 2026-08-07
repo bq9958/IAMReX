@@ -531,6 +531,7 @@ void NavierStokes::init_constant_vel_rho (Box const& vbx,
   });
 }
 
+// Used to set initial conditions in numerical simulations of channel flow
 void NavierStokes::init_channel (Box const& vbx,
                       Array4<Real> const& /*press*/,
                       Array4<Real> const& vel,
