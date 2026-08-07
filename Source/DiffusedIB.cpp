@@ -142,6 +142,9 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
                 "geometry_type = 2 (ellipsoid) requires radius2 and radius3 to be set to positive values");
             Real b = current_kernel.radius2;  // semi-axis b
             Real c = current_kernel.radius3; // semi-axis c
+            // Floor the denominator relative to the smallest semi-axis so that the
+            // centre of the particle stays representable, including in FP32 builds.
+            const Real denom_floor = Real(1.e-6) * amrex::min(a, amrex::min(b, c));
             amrex::ParallelFor(bx, [=]
                 AMREX_GPU_DEVICE(int i, int j, int k) noexcept
                 {
@@ -177,7 +180,7 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
                     Real denominator = 2.0 * std::sqrt(xp4 / a4 + yp4 / b4 + zp4 / c4);
 
                     // Do not normalize here!
-                    pnfab(i,j,k) = numerator / (denominator + 1.e-12);
+                    pnfab(i,j,k) = numerator / amrex::max(denominator, denom_floor);
 
                 }
             );
