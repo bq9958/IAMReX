@@ -67,7 +67,7 @@ C_REF = ["#009E73", "#CC79A7", "#E69F00", "#56B4E9"]  # literature files
 # Left edge of the Schiller-Naumann curve and of the Cd-vs-Re x axis.  Fixed
 # rather than derived from the runs so the reference curve is identical in every
 # version of this figure.
-RE_LINE_MIN = 0.1
+RE_LINE_MIN = 2
 
 
 # ----------------------------------------------------------------------
@@ -300,18 +300,15 @@ def main():
     # 24/Re, so at Re = 0.1 it is ~247 -- letting autoscale see that would
     # squash every run into the bottom 2% of the panel.  The correlation simply
     # leaves the top of the axes on the left, which is the intended reading.
-    ax_cd.set_xscale("log")
     ax_cd.set_xlim(RE_LINE_MIN, re_max)
-    y_data = [r.cd_mean + r.cd_std for r in good]
-    y_data += [float(np.max(ref_cd)) for _, _, ref_cd in refs]
-    ax_cd.set_ylim(0, max(y_data) * 1.25)
+    ax_cd.set_ylim(bottom=0)
     ax_cd.set_xlabel(r"$Re_p = U D_p / \nu$")
     ax_cd.set_ylabel(r"$C_D$")
     ax_cd.set_title("Drag coefficient", loc="left")
     # Lower left: extending the axis down to Re = 0.1 empties that corner, while
     # the upper right now holds the highest-Cd run and its legend swatch would
     # sit right next to it.
-    ax_cd.legend(loc="lower left")
+    ax_cd.legend(loc="upper right")
 
     unconverged = [r.label for r in good if r.note]
     failed = [r.label for r in runs if not r.ok]
