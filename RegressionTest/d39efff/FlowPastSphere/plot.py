@@ -64,6 +64,11 @@ C_PRESENT = "#0072B2"   # blue      -- IAMReX, this commit
 C_SN = "#D55E00"        # vermillion-- Schiller-Naumann correlation
 C_REF = ["#009E73", "#CC79A7", "#E69F00", "#56B4E9"]  # literature files
 
+# Left edge of the Schiller-Naumann curve and of the Cd-vs-Re x axis.  Fixed
+# rather than derived from the runs so the reference curve is identical in every
+# version of this figure.
+RE_LINE_MIN = 0.1
+
 
 # ----------------------------------------------------------------------
 # inputs parsing
@@ -264,14 +269,18 @@ def main():
         top = np.percentile(np.concatenate([r.cd for r in good]), 99)
         ax_hist.set_ylim(0, max(top * 1.15, 1e-6))
 
-    # Right: Cd vs Re.  Log-log -- the drag curve spans decades.
+    # Right: Cd vs Re.
     re_all = [r.Re for r in good]
-    re_line = np.logspace(math.log10(min(re_all) / 1.6),
-                          math.log10(max(re_all) * 1.6), 200)
+    re_max = max(re_all) * 1.6
+    # The correlation is always drawn from RE_LINE_MIN, regardless of where the
+    # runs sit, so the same reference curve appears in every version of this
+    # figure and two commits' plots can be laid side by side.
+    re_line = np.logspace(math.log10(RE_LINE_MIN), math.log10(re_max), 400)
     ax_cd.plot(re_line, schiller_naumann(re_line), color=C_SN, lw=2.0,
                label="Schiller-Naumann (1933)")
 
-    for i, (name, ref_re, ref_cd) in enumerate(load_ref_data(args.ref_data)):
+    refs = load_ref_data(args.ref_data)
+    for i, (name, ref_re, ref_cd) in enumerate(refs):
         ax_cd.plot(ref_re, ref_cd, "s--", ms=6, lw=1.4, mfc="none",
                    color=C_REF[i % len(C_REF)], label=name)
 
@@ -283,15 +292,26 @@ def main():
                        fmt="none", ecolor=C_PRESENT, elinewidth=1.2, capsize=3,
                        zorder=4)
 
-    # Re spans a decade or more, so x stays logarithmic.  Cd is on a linear
-    # axis anchored at zero: it is a magnitude, and a linear axis that does not
-    # include the origin would visually exaggerate the gap to Schiller-Naumann.
+    # Re spans decades, so x stays logarithmic.  Cd is linear and anchored at
+    # zero: it is a magnitude, and an axis that excludes the origin would
+    # visually exaggerate the gap to Schiller-Naumann.
+    #
+    # The y limit is set from the *data*, not from the curve.  S-N diverges like
+    # 24/Re, so at Re = 0.1 it is ~247 -- letting autoscale see that would
+    # squash every run into the bottom 2% of the panel.  The correlation simply
+    # leaves the top of the axes on the left, which is the intended reading.
     ax_cd.set_xscale("log")
-    ax_cd.set_ylim(bottom=0)
+    ax_cd.set_xlim(RE_LINE_MIN, re_max)
+    y_data = [r.cd_mean + r.cd_std for r in good]
+    y_data += [float(np.max(ref_cd)) for _, _, ref_cd in refs]
+    ax_cd.set_ylim(0, max(y_data) * 1.25)
     ax_cd.set_xlabel(r"$Re_p = U D_p / \nu$")
     ax_cd.set_ylabel(r"$C_D$")
     ax_cd.set_title("Drag coefficient", loc="left")
-    ax_cd.legend(loc="upper right")
+    # Lower left: extending the axis down to Re = 0.1 empties that corner, while
+    # the upper right now holds the highest-Cd run and its legend swatch would
+    # sit right next to it.
+    ax_cd.legend(loc="lower left")
 
     unconverged = [r.label for r in good if r.note]
     failed = [r.label for r in runs if not r.ok]
