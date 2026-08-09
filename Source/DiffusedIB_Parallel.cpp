@@ -944,34 +944,39 @@ void mParticle::ForceSpreading(MultiFab & EulerForce,
         // all-reduce below is required. See https://github.com/AMReX-Codes/amrex/discussions/4593
         const int nkern = particle_kernels.size();
         Vector<Real> ib_fm(6 * nkern, 0.0);
-        ReduceOps<ReduceOpSum, ReduceOpSum, ReduceOpSum,
-                  ReduceOpSum, ReduceOpSum, ReduceOpSum> reduce_ops;
-        for (int k = 0; k < nkern; ++k) {
-            const int pid = particle_kernels[k].id;
-            auto r = ParticleReduce<ReduceData<Real, Real, Real, Real, Real, Real>> (
-                *mContainer, [=] AMREX_GPU_DEVICE (const pc& p) noexcept
-                    -> GpuTuple<Real, Real, Real, Real, Real, Real>
-                {
-                    if (p.idata(M_ID) == pid) {
-                        return {
-                            p.rdata(P_ATTR_REAL::Fx_Marker),
-                            p.rdata(P_ATTR_REAL::Fy_Marker),
-                            p.rdata(P_ATTR_REAL::Fz_Marker),
-                            p.rdata(P_ATTR_REAL::Mx_Marker),
-                            p.rdata(P_ATTR_REAL::My_Marker),
-                            p.rdata(P_ATTR_REAL::Mz_Marker)
-                        };
-                    }
-                    return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-                }, reduce_ops);
+        // ===== optimized v2: single pass over all local markers with atomicAdd
+        // ===== into a 6*nkern device accumulator (one scan instead of nkern
+        // ===== full ParticleReduce scans), then one packed MPI all-reduce.
+        amrex::Gpu::DeviceVector<Real> d_ib_fm(6 * nkern, 0.0);
+        auto* d_ptr = d_ib_fm.data();
 
-            ib_fm[6*k+0] = get<0>(r);
-            ib_fm[6*k+1] = get<1>(r);
-            ib_fm[6*k+2] = get<2>(r);
-            ib_fm[6*k+3] = get<3>(r);
-            ib_fm[6*k+4] = get<4>(r);
-            ib_fm[6*k+5] = get<5>(r);
+        for (mParIter pti(*mContainer, LOCAL_LEVEL); pti.isValid(); ++pti) {
+            auto* particles = pti.GetArrayOfStructs().data();
+            auto* attri = pti.GetAttribs().data();
+            const Long np = pti.numParticles();
+            auto* fxP_ptr = attri[P_ATTR_REAL::Fx_Marker].data();
+            auto* fyP_ptr = attri[P_ATTR_REAL::Fy_Marker].data();
+            auto* fzP_ptr = attri[P_ATTR_REAL::Fz_Marker].data();
+            auto* mxP_ptr = attri[P_ATTR_REAL::Mx_Marker].data();
+            auto* myP_ptr = attri[P_ATTR_REAL::My_Marker].data();
+            auto* mzP_ptr = attri[P_ATTR_REAL::Mz_Marker].data();
+
+            ParallelFor(np,
+                [=] AMREX_GPU_DEVICE (const int i) noexcept {
+                    // M_ID equals the kernel index (0..nkern-1); Particle_id[M_ID] = cur_p.id
+                    const int pid = particles[i].idata(M_ID);
+                    const Long base = 6 * pid;
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 0, fxP_ptr[i]);
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 1, fyP_ptr[i]);
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 2, fzP_ptr[i]);
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 3, mxP_ptr[i]);
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 4, myP_ptr[i]);
+                    amrex::Gpu::Atomic::Add(d_ptr + base + 5, mzP_ptr[i]);
+                }
+            );
         }
+        Gpu::copyAsync(Gpu::deviceToHost, d_ib_fm.begin(), d_ib_fm.end(), ib_fm.begin());
+        Gpu::streamSynchronize();
         ParallelAllReduce::Sum(ib_fm.data(), ib_fm.size(), ParallelDescriptor::Communicator());
         for (int k = 0; k < nkern; ++k) {
             particle_kernels[k].ib_force  += {ib_fm[6*k+0], ib_fm[6*k+1], ib_fm[6*k+2]};
