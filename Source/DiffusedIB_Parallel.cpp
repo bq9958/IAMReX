@@ -847,11 +847,16 @@ void ForceSpreadingRKPM_cir(
     int EulerForceIndex,
     int stencil_size)
 {
-    amrex::ignore_unused(plo, dx);
+    amrex::ignore_unused(plo);
+    const Real cellvol = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
 
-    fxP *= dv;
-    fyP *= dv;
-    fzP *= dv;
+    const Real sx = fxP * dv;
+    const Real sy = fyP * dv;
+    const Real sz = fzP * dv;
+
+    fxP = sx * cellvol;
+    fyP = sy * cellvol;
+    fzP = sz * cellvol;
     RealVect moment = RealVect(Real(p.pos(0) - Px), Real(p.pos(1) - Py), Real(p.pos(2) - Pz)).crossProduct(
                       RealVect(Real(fxP), Real(fyP), Real(fzP)));
     mxP = moment[0];
@@ -867,9 +872,9 @@ void ForceSpreadingRKPM_cir(
         const int i = rkpm.index[0];
         const int j = rkpm.index[1];
         const int k = rkpm.index[2];
-        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex    ), Real(rkpm.weight * rkpm.Vcell * fxP));
-        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex + 1), Real(rkpm.weight * rkpm.Vcell * fyP));
-        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex + 2), Real(rkpm.weight * rkpm.Vcell * fzP));
+        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex    ), Real(rkpm.weight * rkpm.Vcell * sx));
+        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex + 1), Real(rkpm.weight * rkpm.Vcell * sy));
+        HostDevice::Atomic::Add(&E(i, j, k, EulerForceIndex + 2), Real(rkpm.weight * rkpm.Vcell * sz));
     }
 }
 
