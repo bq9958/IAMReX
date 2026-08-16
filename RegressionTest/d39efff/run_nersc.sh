@@ -10,14 +10,17 @@
 #   ./run_nersc.sh all                # build, then submit
 #   ./run_nersc.sh build FlowPastSphere
 #   ./run_nersc.sh submit FlowPastSphere/Re100
+#   ./run_nersc.sh submit FallingSphere/tenCate/1.5
 #
 # Build on a login node -- compiling under sbatch burns the allocation.
 #
 # The executable lands in the case directory (e.g. FlowPastSphere/amr3d.gnu.MPI.ex)
-# and each Re<NNN>/job.slurm runs it as ../amr3d.gnu.MPI.ex, so every Reynolds
-# number shares one binary but gets its own working directory.  That separation
-# is load-bearing: IB_Particle_*.csv is opened with std::ios::app, so two runs
-# in one directory would silently concatenate their output.
+# and each <run>/job.slurm runs it via ../../amr3d.gnu.x86-milan.MPI.ex (for
+# FlowPastSphere/Re*/) or ../../../amr3d.gnu.x86-milan.MPI.ex (for the deeper
+# FallingSphere/<set>/<Re>/), so every run shares one binary but gets its own
+# working directory.  That separation is load-bearing: IB_Particle_*.csv is
+# opened with std::ios::app, so two runs in one directory would silently
+# concatenate their output.
 
 set -euo pipefail
 
@@ -31,7 +34,7 @@ COMMIT="${COMMIT##*_}"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 
 # Cases to act on when none are named on the command line.
-DEFAULT_CASES=(FlowPastSphere)
+DEFAULT_CASES=(FlowPastSphere FallingSphere)
 
 # Print the comment block at the top of this file, however long it happens to be.
 usage() {
@@ -91,7 +94,7 @@ do_submit() {
         if [[ -f "$HERE/$target/job.slurm" ]]; then
             local runs=("$HERE/$target")
         else
-            mapfile -t runs < <(find "$HERE/$target" -mindepth 2 -maxdepth 2 \
+            mapfile -t runs < <(find "$HERE/$target" -mindepth 2 \
                                      -name job.slurm -printf '%h\n' | sort)
         fi
         [[ ${#runs[@]} -gt 0 ]] || { echo "error: no job.slurm under $target" >&2; exit 2; }
@@ -118,3 +121,4 @@ esac
 echo
 echo "done. after the jobs finish:"
 echo "    python3 FlowPastSphere/plot.py"
+echo "    python3 FallingSphere/plot.py   (if available)"

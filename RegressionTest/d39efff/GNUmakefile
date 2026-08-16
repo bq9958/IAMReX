@@ -1,7 +1,7 @@
-AMREX_HOME       ?= ../../../../amrex
-AMREX_HYDRO_HOME ?= ../../../../AMReX-Hydro
+AMREX_HOME       ?= ../../../amrex
+AMREX_HYDRO_HOME ?= ../../../AMReX-Hydro
 
-TOP = ../../..
+TOP = ../..
 
 PRECISION   = DOUBLE
 
