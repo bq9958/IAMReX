@@ -224,6 +224,7 @@ int NavierStokesBase::lev0step_of_reinit = 1;
 int NavierStokesBase::number_of_reinit   = 4;
 int NavierStokesBase::reinit_levelset    = 1;
 
+Real NavierStokesBase::epsilon_massfix  = -1.0;   // <= 0: use epsilon
 int NavierStokesBase::do_cons_phi        = 0;
 int NavierStokesBase::prescribed_vel     = 0;
 
@@ -671,6 +672,7 @@ NavierStokesBase::Initialize ()
     pp.query("do_phi", do_phi);
     if (do_phi) {
         pp.query("epsilon", epsilon);
+        pp.query("epsilon_massfix", epsilon_massfix);
         pp.query("mu_a", mu_a);
         pp.query("mu_w", mu_w);
         pp.query("rho_a", rho_a);
@@ -6085,7 +6087,10 @@ NavierStokesBase::mass_fix (MultiFab& phi_ctime,
     if(verbose) amrex::Print() << "NavierStokesBase::mass_fix " << std::endl;
 
     const Real pi     = 3.141592653589793238462643383279502884197;
-    Real eps = calculate_eps(geom, epsilon);
+    // Band of H'_eps in the volume constraint (Sussman et al. 1999, eq. 68). It need not equal the
+    // Heaviside band used for rho/mu: the constraint conserves the eps-smoothed volume, and on
+    // filaments thinner than 2*eps a wide band pushes the zero contour outward (area gain).
+    Real eps = (epsilon_massfix > 0.0 ? epsilon_massfix : Real(epsilon)) * calculate_eps(geom, 1);
     Real tao = loop_iter * delta_t;
 
     // calculate ld and delta

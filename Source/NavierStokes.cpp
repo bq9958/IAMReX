@@ -1022,6 +1022,44 @@ NavierStokes::sum_integrated_quantities ()
     Real energy = volumeWeightedSum(derived_mf_ptrs, 0,
                                     parent->Geom(), parent->refRatio());
 
+    //
+    // ls related: volume of the phi > 0 phase, smoothed (integral of H_eps(phi)) and sharp (cells with phi > 0)
+    //
+    Real vol_heavi = 0.0, vol_sharp = 0.0;
+    if (do_phi) {
+        Vector<std::unique_ptr<MultiFab>> heavi_mf(finest_level+1), sharp_mf(finest_level+1);
+        Vector<const MultiFab*> heavi_ptrs(finest_level+1), sharp_ptrs(finest_level+1);
+        for (int lev = 0; lev <= finest_level; lev++)
+        {
+            NavierStokes& ns_level = getLevel(lev);
+            MultiFab& S_new = ns_level.get_new_data(State_Type);
+            MultiFab phi_alias(S_new, amrex::make_alias, phicomp, 1);
+            // phi_to_heavi fills the grown box of phi, so the Heaviside field needs the same ghost cells
+            heavi_mf[lev] = std::make_unique<MultiFab>(S_new.boxArray(), S_new.DistributionMap(), 1, S_new.nGrow());
+            sharp_mf[lev] = std::make_unique<MultiFab>(S_new.boxArray(), S_new.DistributionMap(), 1, 0);
+            phi_to_heavi(ns_level.Geom(), epsilon, phi_alias, *heavi_mf[lev]);
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+            for (MFIter mfi(*sharp_mf[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
+            {
+                const Box& bx = mfi.tilebox();
+                auto const& phifab   = phi_alias.const_array(mfi);
+                auto const& sharpfab = sharp_mf[lev]->array(mfi);
+                amrex::ParallelFor(bx, [phifab, sharpfab]
+                AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                {
+                    sharpfab(i,j,k) = (phifab(i,j,k) > 0.0) ? 1.0 : 0.0;
+                });
+            }
+            heavi_ptrs[lev] = heavi_mf[lev].get();
+            sharp_ptrs[lev] = sharp_mf[lev].get();
+        }
+        vol_heavi = volumeWeightedSum(heavi_ptrs, 0, parent->Geom(), parent->refRatio());
+        vol_sharp = volumeWeightedSum(sharp_ptrs, 0, parent->Geom(), parent->refRatio());
+        Print().SetPrecision(12) << "TIME= " << time << " PHASE VOLUME (phi>0, H_eps / sharp)= " << vol_heavi << " " << vol_sharp << '\n';
+    }
+
     Print() << '\n';
     Print().SetPrecision(12) << "TIME= " << time << " MASS= " << mass << '\n';
     Print().SetPrecision(12) << "TIME= " << time << " TRAC= " << trac << '\n';
@@ -1035,7 +1073,10 @@ NavierStokes::sum_integrated_quantities ()
         // std::ofstream ofs("mass.txt", std::ios::out); // override mode
         if (ofs.is_open())
         {
-            amrex::Print(ofs).SetPrecision(12) << time << " " << mass << " " << trac << " " << energy << '\n';
+            // columns: time  mass  tracer  kinetic_energy  [phase_volume_heaviside  phase_volume_sharp]
+            amrex::Print(ofs).SetPrecision(12) << time << " " << mass << " " << trac << " " << energy;
+            if (do_phi) amrex::Print(ofs).SetPrecision(12) << " " << vol_heavi << " " << vol_sharp;
+            amrex::Print(ofs) << '\n';
             ofs.close();
         }
         else

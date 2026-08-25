@@ -1104,6 +1104,11 @@ public:
     amrex::MultiFab phi_original;
     amrex::MultiFab sgn0;
 
+    /** Band half-width (in units of dx) of the smoothed delta function used by the
+     *  Sussman-Fatemi volume constraint in mass_fix(). Defaults to ns.epsilon; a
+     *  narrower band (ns.epsilon_massfix = 1) conserves the sharp phase area much
+     *  better on under-resolved filaments (see Tutorials/RSV). */
+    static amrex::Real epsilon_massfix;
     static int  do_cons_phi;
     static int  prescribed_vel;
 
