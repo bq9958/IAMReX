@@ -1,0 +1,2 @@
+step,time,dt,area_heaviside,area_sharp,area_loss_pct,interface_error,grad_err_max_band,grad_err_mean_band,sign_guard_hits
+0,0,0,0.196745,0.19624,0.0556693,0.000175781,0.00490881,0.00226581,0
