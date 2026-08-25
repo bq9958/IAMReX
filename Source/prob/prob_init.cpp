@@ -918,7 +918,8 @@ void NavierStokes::init_BreakingWave (Box const& vbx,
 // exact solution in 2D is
 //     u(x,y,t) =   Sin(2 Pi x) Cos(2 Pi y) Exp(-2 (2Pi)^2 Nu t)
 //     v(x,y,t) = - Cos(2 Pi x) Sin(2 Pi y) Exp(-2 (2Pi)^2 Nu t)
-//     p(x,y,t) = - {Cos(4 Pi x) + Cos(4 Pi y)} Exp(-4 (2Pi)^2 Nu t) / 4
+//     p(x,y,t) =   {Cos(4 Pi x) + Cos(4 Pi y)} Exp(-4 (2Pi)^2 Nu t) / 4
+//     (sign follows from -p_x = u u_x + v u_y = Pi Sin(4 Pi x) for this velocity field)
 // In Exec/benchmarks, there is a tool ViscBench2d.cpp that reads a
 // plot file and compares the solution against this exact solution.
 // This benchmark was originally derived by G.I. Taylor (Phil. Mag.,
