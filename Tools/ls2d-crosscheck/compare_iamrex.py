@@ -23,6 +23,6 @@ if phi is not None:
     out += f" area_pos={(a > 0).sum() * dx * dy:.6f} interface_ymin={ymin:.5f} interface_ymax={ymax:.5f}"
 if "--tg" in sys.argv:
     nu = float(sys.argv[sys.argv.index("--tg") + 1]); X, Y = np.meshgrid(x, y); dcy = math.exp(-8 * math.pi**2 * nu * t)
-    ue = np.sin(2 * np.pi * X) * np.cos(2 * np.pi * Y) * dcy; ve = -np.cos(2 * np.pi * X) * np.sin(2 * np.pi * Y) * dcy
-    out += f" L2_error_u={math.sqrt(((u - ue)**2).sum() * dx * dy):.6e} Linf_u={np.abs(u - ue).max():.6e}"
+    u_ex = np.sin(2 * np.pi * X) * np.cos(2 * np.pi * Y) * dcy; v_ex = -np.cos(2 * np.pi * X) * np.sin(2 * np.pi * Y) * dcy
+    out += f" L2_error_u={math.sqrt(((u - u_ex)**2).sum() * dx * dy):.6e} Linf_u={np.abs(u - u_ex).max():.6e}"
 print(out)
