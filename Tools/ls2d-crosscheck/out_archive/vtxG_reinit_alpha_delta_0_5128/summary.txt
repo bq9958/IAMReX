@@ -1,0 +1,17 @@
+problem vortex
+grid 128 128
+steps 1304
+t_final 8
+exact_area 0.0706858
+area_sharp_initial 0.0706592
+area_sharp_final 0.0629846
+area_loss_pct 10.895
+area_heaviside_initial 0.0707861
+area_heaviside_final 0.0631091
+perimeter_initial 0.942655
+interface_error_initial 2.92969e-05
+interface_error_final 0.0301135
+interface_error_final_over_L 0.0319454
+grad_err_max_band 0.394613
+grad_err_mean_band 0.0068606
+sign_guard_hits_last 0

@@ -1,0 +1,13 @@
+problem taylorgreen
+grid 64 64
+steps 17
+t_final 0.2
+kinetic_energy 0.18236705
+max_div_mac 1.4295232e-12
+max_div_nodal 0.0022971474
+L2_error_u 0.00015159951
+L2_error_v 0.00014489861
+Linf_error_u 0.00066471122
+L2_error_p 0.0014906216
+interface_ymin 1e+30
+interface_ymax -1e+30

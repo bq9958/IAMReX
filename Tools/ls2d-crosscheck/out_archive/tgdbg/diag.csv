@@ -1,0 +1,3 @@
+step,time,dt,kinetic_energy,max_div_mac,max_div_nodal,area_pos,interface_ymin,interface_ymax,mac_iters,visc_iters,nodal_iters,umax
+0,0,0,0.25,8.33689e-12,6.21725e-15,1,1e+30,-1e+30,72,0,47,0.990393
+2,0.03,0.0142234,0.249942,1.99307e-12,0.0106062,1,1e+30,-1e+30,71,0,47,0.990529

@@ -1,0 +1,17 @@
+problem zalesak
+grid 100 100
+steps 623
+t_final 628
+exact_area 582.207
+area_sharp_initial 581.8
+area_sharp_final 579.56
+area_loss_pct 0.454655
+area_heaviside_initial 585.817
+area_heaviside_final 568.445
+perimeter_initial 142.368
+interface_error_initial 1.14
+interface_error_final 217.34
+interface_error_final_over_L 1.52661
+grad_err_max_band 0.997695
+grad_err_mean_band 0.554902
+sign_guard_hits_last 0

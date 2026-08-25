@@ -1,0 +1,5 @@
+# run snapshots are not tracked (~96 MB); the numbers live in diag.csv / summary.txt / log.* / *.png
+*.vtk
+*.npy
+phi_final.txt
+__pycache__/

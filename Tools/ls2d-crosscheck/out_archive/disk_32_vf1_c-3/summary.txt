@@ -1,0 +1,17 @@
+problem disk
+grid 32 32
+steps 0
+t_final 0
+exact_area 0.19635
+area_sharp_initial 0.195898
+area_sharp_final 0.195898
+area_loss_pct 0.229745
+area_heaviside_initial 0.197956
+area_heaviside_final 0.197956
+perimeter_initial 1.5677
+interface_error_initial 0.00046875
+interface_error_final 0.00046875
+interface_error_final_over_L 0.000299005
+grad_err_max_band 0.0136566
+grad_err_mean_band 0.00438189
+sign_guard_hits_last 0
