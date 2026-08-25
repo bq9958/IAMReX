@@ -6103,9 +6103,10 @@ NavierStokesBase::mass_fix (MultiFab& phi_ctime,
         AMREX_GPU_DEVICE(int i, int j, int k) noexcept
         {
             ldfab(i,j,k) = (phifab(i,j,k) - phiorifab(i,j,k)) / tao;
-            if (phifab(i,j,k) > eps) {
-                deltafab(i,j,k) = 0.0;
-            } else if (phifab(i,j,k) > -eps) {
+            // H'_eps(d^0) (Sussman et al. 1999, eq. 68): the support test and the
+            // value must both use the original level set phi_original; testing on
+            // the current phi evaluated the cosine outside its support at band-edge cells.
+            if (std::abs(phiorifab(i,j,k)) <= eps) {
                 deltafab(i,j,k) = 0.5 * (1.0 + std::cos(phiorifab(i,j,k) * pi / eps)) / eps;
             } else {
                 deltafab(i,j,k) = 0.0;
