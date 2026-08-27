@@ -15,6 +15,7 @@
 #include <iamr_constants.H>
 
 #include "DiffusedIB_Parallel.H"
+#include <AMReX_MPMD.H>
 
 #include <filesystem>
 #include <sstream>
@@ -356,6 +357,7 @@ void mParticle::InteractWithEuler(MultiFab &EulerVel,
 
     // Sync kernel data to device memory for GPU ParallelFor
     syncKernelsToDevice();
+    RefreshRKPMWeights();
 
     BL_ASSERT(loop > 0);
     while(loop > 0){
@@ -375,6 +377,53 @@ void mParticle::InteractWithEuler(MultiFab &EulerVel,
         loop--;
     }
     spend_time += ParallelDescriptor::second() - InteractWithEulerStart;
+}
+
+void mParticle::RefreshRKPMWeights()
+{
+    if (!amrex::MPMD::Initialized() || m_ml_exchange_done) return;
+    // m_ml_exchange_done = true;
+
+    const int Nm = static_cast<int>(LargrangianMarker.size());
+    const int server_root = amrex::MPMD::NProcs() - 1;
+    const int nw = Nm * RKPM_STENCIL_SIZE;
+
+    Vector<float> h_w(nw);
+    if (ParallelDescriptor::MyProc() == ParallelDescriptor::IOProcessorNumber()) {
+        const Real t0 = ParallelDescriptor::second();
+        // send number of markers
+        MPI_Send(&Nm, 1, MPI_INT, server_root, 200, MPI_COMM_WORLD);
+        // send marker positions
+        Vector<float> h_pos(Nm * 3);
+        for (int i = 0; i < Nm; ++i) {
+            h_pos[3*i+0] = static_cast<float>(LargrangianMarker[i][0]);
+            h_pos[3*i+1] = static_cast<float>(LargrangianMarker[i][1]);
+            h_pos[3*i+2] = static_cast<float>(LargrangianMarker[i][2]);
+        }
+        MPI_Send(h_pos.data(), Nm*3, MPI_FLOAT, server_root, 201, MPI_COMM_WORLD);
+        // receive weights
+        MPI_Recv(h_w.data(), nw, MPI_FLOAT, server_root, 202, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        const Real t1 = ParallelDescriptor::second();
+        double s = 0.0;
+        for (int i = 0; i < nw; ++i) s += h_w[i];
+        Print() << "[RKPM-ML] received " << Nm << " markers, sum=" << s 
+                << ", 收发耗时(含服务端计算)=" << (t1 - t0) << " s\n";
+    }
+
+    // broadcast weights to all procs
+    ParallelDescriptor::Bcast(h_w.data(), nw, ParallelDescriptor::IOProcessorNumber());
+
+    // copy to device weight
+    AMREX_ALWAYS_ASSERT(h_rkpm_flat.size() == static_cast<size_t>(nw));
+    for (int i = 0; i < nw; ++i) {
+        h_rkpm_flat[i].weight = static_cast<Real>(h_w[i]);
+    }
+    Gpu::copyAsync(Gpu::hostToDevice, h_rkpm_flat.begin(), h_rkpm_flat.end(), d_rkpm_flat.begin());
+    Gpu::streamSynchronize();
+
+    if (ParallelDescriptor::MyProc() == ParallelDescriptor::IOProcessorNumber()) {
+        Print() << "[RKPM-ML] wrote " << nw << " weights to d_rkpm_flat\n";
+    }
 }
 
 void mParticle::InitParticles(const Vector<Real>& x,
@@ -1325,7 +1374,7 @@ void mParticle::ResolveWithRPKM(std::string RKPM_file) {
         max_key = std::max(max_key, key);
         AMREX_ALWAYS_ASSERT(int(vec.size()) <= RKPM_STENCIL_SIZE);
     }
-    Gpu::HostVector<MAP_INFO> h_rkpm_flat((max_key + 1) * RKPM_STENCIL_SIZE);
+    h_rkpm_flat.resize((max_key + 1) * RKPM_STENCIL_SIZE);
     for (const auto& [key, vec] : RKPM_MAP) {
         const int n = int(vec.size());
         for (int j = 0; j < n; ++j) {

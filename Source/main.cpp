@@ -11,6 +11,8 @@
 #include <AMReX_ParmParse.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_BLProfiler.H>
+#include <AMReX_MPMD.H>
+#include <cstdlib>
 
 #ifdef AMREX_USE_EB
 #include <AMReX_EB2.H>
@@ -30,7 +32,13 @@ int
 main (int   argc,
       char* argv[])
 {
-    amrex::Initialize(argc,argv);
+    const bool mpmd_mode = (std::getenv("IAMReX_MPMD") != nullptr);
+    if (mpmd_mode) {
+        MPI_Comm app_comm = amrex::MPMD::Initialize(argc, argv);
+        amrex::Initialize(argc, argv, true, app_comm);
+    } else {
+        amrex::Initialize(argc, argv);
+    }
 
     BL_PROFILE_REGION_START("main()");
     BL_PROFILE_VAR("main()", pmain);
@@ -152,8 +160,14 @@ main (int   argc,
     BL_PROFILE_SET_RUN_TIME(run_stop);
     BL_PROFILE_FINALIZE();
 
+    if (mpmd_mode) {
+        if (ParallelDescriptor::MyProc() == ParallelDescriptor::IOProcessorNumber()) {
+            int stop = 0;
+            MPI_Send(&stop, 1, MPI_INT, amrex::MPMD::NProcs()-1, 200, MPI_COMM_WORLD);
+        }
+    }
 
     amrex::Finalize();
-
+    if (mpmd_mode) amrex::MPMD::Finalize();
     return 0;
 }

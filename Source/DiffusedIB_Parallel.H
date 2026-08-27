@@ -338,7 +338,7 @@ public:
      * @return Position vector of the marker
      */
     RealVect GetPositionOfMarker(size_t index);
-
+    void RefreshRKPMWeights();
     Vector<kernel> particle_kernels;
 
     /// GPU-accessible copy of kernel data for use in device lambdas.
@@ -365,6 +365,7 @@ public:
     /// GPU-friendly flattened RKPM stencil data: d_rkpm_flat[id * RKPM_STENCIL_SIZE + cell_index]
     static constexpr int RKPM_STENCIL_SIZE = 27;
     Gpu::DeviceVector<MAP_INFO> d_rkpm_flat;
+    Gpu::HostVector<MAP_INFO> h_rkpm_flat;
 
     int max_largrangian_num = 0;
 
@@ -377,6 +378,7 @@ public:
     Real spend_time;
     // read write
     bool do_RKPM{false};
+    bool m_ml_exchange_done{false};
 };
 
 /// @}
