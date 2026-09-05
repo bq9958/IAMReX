@@ -1,10 +1,8 @@
 import numpy as np
 
-# 一维窗口函数
-# 输入参数：
-#   r: 浮点数，归一化距离
-# 输出：
-#   返回窗口函数值
+# One-dimensional window function.
+# Input: r, the normalized distance.
+# Output: the window-function value.
 def window_function_d(r):
     abs_r = np.abs(r)
     if 0.5 <= abs_r <= 1.5:
@@ -14,13 +12,11 @@ def window_function_d(r):
     else:
         return 0
 
-# 计算支持域内窗口函数矩阵
-# 输入参数：
-#   S_I: 当前拉格朗日点的支持域内欧拉点及体积信息
-#   lagrangian_points: 当前拉格朗日点坐标 (3,)
-#   delta_I, eta_I, theta_I: 当前拉格朗日点的支持域参数
-# 输出：
-#   m_ab_matrix: (10,10) 的窗口函数矩阵
+# Compute the window-function matrix over a support domain.
+# S_I contains Eulerian points and volumes for the current marker.
+# lagrangian_points is the current marker coordinate (3,).
+# delta_I, eta_I and theta_I are support-domain parameters.
+# Returns the (10, 10) window-function matrix.
 def compute_m_ab_matrix(S_I, lagrangian_points, delta_I, eta_I, theta_I, V_lag):
     x_i, y_j, z_k = lagrangian_points
     m_ab_matrix = np.zeros((10, 10))
@@ -36,7 +32,7 @@ def compute_m_ab_matrix(S_I, lagrangian_points, delta_I, eta_I, theta_I, V_lag):
 
         w_total = window_function_d(delta_x) * window_function_d(delta_y) * window_function_d(delta_z) * Delta_V / V_lag
 
-        # 计算矩阵的每个元素
+        # Accumulate every matrix entry.
         m_ab_matrix[0, 0] += (dis_x**0.0) * (dis_y**0.0) * (dis_z**0.0) * w_total
         m_ab_matrix[0, 1] += (dis_x**1.0) * (dis_y**0.0) * (dis_z**0.0) * w_total
         m_ab_matrix[0, 2] += (dis_x**0.0) * (dis_y**1.0) * (dis_z**0.0) * w_total
@@ -149,11 +145,7 @@ def compute_m_ab_matrix(S_I, lagrangian_points, delta_I, eta_I, theta_I, V_lag):
 
     return m_ab_matrix
 
-# 计算修正系数d_I
-# 输入参数：
-#   M_I: (10,10) 的窗口函数矩阵
-# 输出：
-#   d_I: (10,) 的修正系数数组
+# Compute correction coefficients d_I from the (10, 10) matrix M_I.
 def compute_b_I(M_I):
 
     e_1 = np.zeros(10)
@@ -167,14 +159,10 @@ def compute_b_I(M_I):
 
     return d_I
 
-# 计算修正窗口函数
-# 输入参数：
-#   S_I: 当前拉格朗日点的支持域内欧拉点及体积信息
-#   lagrangian_point: 当前拉格朗日点坐标 (3,)
-#   d_I: 修正系数数组
-#   delta, eta, theta: 当前拉格朗日点的支持域参数
-# 输出：
-#   modified_w_values: 修正后的窗口函数值列表
+# Compute corrected window-function values for one marker.
+# S_I contains Eulerian points and volumes in the support domain.
+# lagrangian_point is the marker coordinate; d_I contains correction
+# coefficients; and delta, eta and theta are support-domain parameters.
 def modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_lag):
 
     x_i, y_j, z_k = lagrangian_point
@@ -182,7 +170,7 @@ def modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_la
     modified_w_values = []
     integral = 0.0
 
-    # 退回三点
+    # Optional fallback to the uncorrected three-point kernel.
     # d_I = np.zeros(10)
     # d_I[0] = 1
 
@@ -195,10 +183,10 @@ def modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_la
         dis_y = y_mn - y_j
         dis_z = z_mn - z_k
 
-        # 计算窗函数
+        # Evaluate the base window function.
         w_total = window_function_d(delta_x) * window_function_d(delta_y) * window_function_d(delta_z) * Delta_V / V_lag
 
-        # 计算修正窗函数
+        # Apply the polynomial correction.
         modified_w = d_I[0] * w_total + \
                      d_I[1] * dis_x * w_total + \
                      d_I[2] * dis_y * w_total + \
@@ -218,13 +206,7 @@ def modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_la
 
     return modified_w_values
 
-# 计算所有拉格朗日点的修正窗口函数
-# 输入参数：
-#   all_S_I: 所有拉格朗日点的支持域信息
-#   lagrangian_points: 所有拉格朗日点坐标 (Ne, 3)
-#   delta_I, eta_I, theta_I: 所有拉格朗日点的支持域参数
-# 输出：
-#   all_modified_w: 所有拉格朗日点的修正窗口函数值列表
+# Compute corrected window functions for all Lagrangian markers.
 def compute_all_modified_window_functions(all_S_I, lagrangian_points, delta_I, eta_I, theta_I, V_lag):
 
     all_modified_w = []
@@ -235,13 +217,13 @@ def compute_all_modified_window_functions(all_S_I, lagrangian_points, delta_I, e
         theta = theta_I[idx]
         lagrangian_point = lagrangian_points[idx]
 
-        # 计算 m_ab_matrix
+        # Compute the moment matrix.
         M_I = compute_m_ab_matrix(S_I, lagrangian_point, delta, eta, theta, V_lag)
 
-        # 计算 b_I 和 d_I
+        # Solve for correction coefficients d_I.
         d_I = compute_b_I(M_I)
 
-        # 计算修正窗函数
+        # Compute corrected window values.
         modified_w = modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_lag)
 
         all_modified_w.append(modified_w)
