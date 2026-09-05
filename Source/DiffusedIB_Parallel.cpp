@@ -381,8 +381,8 @@ void mParticle::InteractWithEuler(MultiFab &EulerVel,
 
 void mParticle::RefreshRKPMWeights()
 {
-    if (!amrex::MPMD::Initialized() || m_ml_exchange_done) return;
-    // m_ml_exchange_done = true;
+    if (!do_RKPM || !amrex::MPMD::Initialized() || m_mpmd_exchange_done) return;
+    // m_mpmd_exchange_done = true;
 
     const int Nm = static_cast<int>(LargrangianMarker.size());
     const int server_root = amrex::MPMD::NProcs() - 1;
@@ -406,8 +406,8 @@ void mParticle::RefreshRKPMWeights()
         const Real t1 = ParallelDescriptor::second();
         double s = 0.0;
         for (int i = 0; i < nw; ++i) s += h_w[i];
-        Print() << "[RKPM-ML] received " << Nm << " markers, sum=" << s 
-                << ", 收发耗时(含服务端计算)=" << (t1 - t0) << " s\n";
+        Print() << "[RKPM-MPMD] received " << Nm << " markers, sum=" << s
+                << ", recv-send time (ML inference included)=" << (t1 - t0) << " s\n";
     }
 
     // broadcast weights to all procs
@@ -422,7 +422,7 @@ void mParticle::RefreshRKPMWeights()
     Gpu::streamSynchronize();
 
     if (ParallelDescriptor::MyProc() == ParallelDescriptor::IOProcessorNumber()) {
-        Print() << "[RKPM-ML] wrote " << nw << " weights to d_rkpm_flat\n";
+        Print() << "[RKPM-MPMD] wrote " << nw << " weights to d_rkpm_flat\n";
     }
 }
 

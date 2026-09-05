@@ -378,7 +378,7 @@ public:
     Real spend_time;
     // read write
     bool do_RKPM{false};
-    bool m_ml_exchange_done{false};
+    bool m_mpmd_exchange_done{false};
 };
 
 /// @}
