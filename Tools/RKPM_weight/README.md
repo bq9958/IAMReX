@@ -92,6 +92,13 @@ exactly one rank. Set `solver` in the case configuration, or override it with
 `--solver rkpm` or `--solver ml`, to select the backend without changing the
 MPMD protocol.
 
+Marker positions use double precision (`MPI_DOUBLE`) so cell-index validation
+does not lose coordinate precision in transit. Returned weights remain single
+precision (`MPI_FLOAT`) to match the ML model output. Coordinates within
+floating-point roundoff of an internal grid line are snapped to that line
+before applying `floor`, so the exact line consistently belongs to the cell on
+its high-index side.
+
 Before sending MPMD weights, the server can check the zeroth moment and the
 first moment in cell units. `check_action` selects `off`, `warn`, or `abort`,
 and `check_interval` controls how often the check runs. The check uses the

@@ -1,5 +1,6 @@
 import numpy as np
 from src import visual
+from src.grid_index import containing_cell_indices
 import sys
 import ast
 
@@ -142,12 +143,10 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
     print('ranges', ranges[0]/2, ranges[1]/2, ranges[2]/2)
 
     # Expand finest-grid global indices and clamp them to [0, n_fine-1].
-    i_lo = int(np.floor((pmin[0] - prob_lo[0]) / dx)) - 2
-    j_lo = int(np.floor((pmin[1] - prob_lo[1]) / dy)) - 2
-    k_lo = int(np.floor((pmin[2] - prob_lo[2]) / dz)) - 2
-    i_hi = int(np.floor((pmax[0] - prob_lo[0]) / dx)) + 2
-    j_hi = int(np.floor((pmax[1] - prob_lo[1]) / dy)) + 2
-    k_hi = int(np.floor((pmax[2] - prob_lo[2]) / dz)) + 2
+    min_ijk = containing_cell_indices(pmin, prob_lo, dx_finest)
+    max_ijk = containing_cell_indices(pmax, prob_lo, dx_finest)
+    i_lo, j_lo, k_lo = (int(value) - 2 for value in min_ijk)
+    i_hi, j_hi, k_hi = (int(value) + 2 for value in max_ijk)
     i_lo, j_lo, k_lo = max(0, i_lo), max(0, j_lo), max(0, k_lo)
     i_hi = min(int(n_fine[0]) - 1, i_hi)
     j_hi = min(int(n_fine[1]) - 1, j_hi)
@@ -185,7 +184,9 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
     grid_shape = XC.shape
 
     # Find each marker's containing global cell.
-    indices_ijk = np.floor((lagrangian_points - prob_lo) / dx_finest).astype(int)
+    indices_ijk = containing_cell_indices(
+        lagrangian_points, prob_lo, dx_finest
+    )
     # Convert global indices to local array indices.
     local_ijk = (indices_ijk[:, 0] - i_lo, indices_ijk[:, 1] - j_lo, indices_ijk[:, 2] - k_lo)
     nearest_indices = np.ravel_multi_index(local_ijk, dims=grid_shape)

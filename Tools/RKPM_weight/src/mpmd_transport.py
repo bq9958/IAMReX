@@ -93,11 +93,11 @@ def serve_mpmd(
                     f"{expected_markers}"
                 )
             # Receive the flat C++ position array.
-            position_buffer = np.empty(marker_count * 3, dtype=np.float32)
+            position_buffer = np.empty(marker_count * 3, dtype=np.float64)
             world.Recv(
-                [position_buffer, MPI.FLOAT], source=cfd_root, tag=TAG_POSITIONS
+                [position_buffer, MPI.DOUBLE], source=cfd_root, tag=TAG_POSITIONS
             )
-            # reshape to (Nm, 3) and convert to float64
+            # Reshape the double-precision wire buffer to (Nm, 3).
             positions = positions_as_array(
                 position_buffer.reshape(marker_count, 3), marker_ids
             )

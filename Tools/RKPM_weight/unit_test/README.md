@@ -31,8 +31,9 @@ regression additionally uses the bundled 2830-marker files under
 
 ## Test Details
 
-Seven `test_*.py` files currently define eight `unittest` test methods;
-`test_validation.py` contains two methods and each other file contains one.
+Seven `test_*.py` files currently define nine `unittest` test methods;
+`test_validation.py` and `test_fixed_stencil.py` contain two methods each, and
+each other file contains one.
 
 ### `test_rkpm_reproduction.py`
 
@@ -96,19 +97,29 @@ Seven `test_*.py` files currently define eight `unittest` test methods;
   x-direction cell width must raise the center-cell-crossing error, and removing
   one of the 27 rows must raise the incomplete-stencil error.
 
+#### `FixedStencilTests.test_grid_line_roundoff_snaps_to_high_index_cell`
+
+- **What it tests:** A marker on an internal grid line follows the shared
+  half-open-cell convention and remains in the high-index cell when floating-
+  point roundoff places it infinitesimally below that line.
+- **How it tests it:** It checks the exact grid-line coordinate and the next
+  representable double below it, then verifies that a marker genuinely farther
+  into the low-index cell is still rejected.
+
 ### `test_mpmd_transport.py`
 
-#### `MPMDTransportTests.test_mpmd_preserves_float32_order_across_two_exchanges`
+#### `MPMDTransportTests.test_mpmd_preserves_double_positions_and_float32_weight_order`
 
-- **What it tests:** The Python MPMD loop preserves the float32 values and
-  marker/stencil ordering defined by the IAMReX communication protocol across
-  repeated exchanges and shuts down cleanly.
+- **What it tests:** The Python MPMD loop receives double-precision marker
+  positions, preserves the float32 weight values and marker/stencil ordering
+  across repeated exchanges, and shuts down cleanly.
 - **How it tests it:** It starts two real MPI application contexts.
   `mpmd_client.py` emulates the C++ root rank, while `mpmd_server.py` runs the
   production `serve_mpmd()` loop with deterministic weights that encode the
-  exchange, marker, stencil position and received x-coordinate. The client
-  performs two exact array comparisons, sends a zero marker count, and the
-  parent process enforces a 30-second deadlock timeout.
+  exchange, marker, stencil position and received x-coordinate. One marker is
+  placed exactly on a grid line to exercise the double-plus-snap path. The
+  client performs two exact array comparisons, sends a zero marker count, and
+  the parent process enforces a 30-second deadlock timeout.
 
 This test verifies the Python server and the agreed wire protocol; it does not
 compile or execute the IAMReX C++ implementation itself.

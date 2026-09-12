@@ -394,13 +394,13 @@ void mParticle::RefreshRKPMWeights()
         // send number of markers
         MPI_Send(&Nm, 1, MPI_INT, server_root, 200, MPI_COMM_WORLD);
         // send marker positions
-        Vector<float> h_pos(Nm * 3);
+        Vector<double> h_pos(Nm * 3);
         for (int i = 0; i < Nm; ++i) {
-            h_pos[3*i+0] = static_cast<float>(LargrangianMarker[i][0]);
-            h_pos[3*i+1] = static_cast<float>(LargrangianMarker[i][1]);
-            h_pos[3*i+2] = static_cast<float>(LargrangianMarker[i][2]);
+            h_pos[3*i+0] = static_cast<double>(LargrangianMarker[i][0]);
+            h_pos[3*i+1] = static_cast<double>(LargrangianMarker[i][1]);
+            h_pos[3*i+2] = static_cast<double>(LargrangianMarker[i][2]);
         }
-        MPI_Send(h_pos.data(), Nm*3, MPI_FLOAT, server_root, 201, MPI_COMM_WORLD);
+        MPI_Send(h_pos.data(), Nm*3, MPI_DOUBLE, server_root, 201, MPI_COMM_WORLD);
         // receive weights
         MPI_Recv(h_w.data(), nw, MPI_FLOAT, server_root, 202, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         const Real t1 = ParallelDescriptor::second();
