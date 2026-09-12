@@ -15,6 +15,7 @@ from typing import Dict, Mapping, Sequence
 import numpy as np
 
 from . import window
+from .grid_index import containing_cell_indices
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,7 @@ def validate_fixed_stencils(positions, lag_map, grid: GridSpec, marker_ids):
     crosses a cell boundary, the old stencil is invalid. Fail explicitly instead
     of silently applying weights to the wrong cells.
     """
-    containing = np.floor((positions - grid.prob_lo) / grid.dx).astype(int)
+    containing = containing_cell_indices(positions, grid.prob_lo, grid.dx)
     for row_index, marker_id in enumerate(marker_ids):
         ijk = np.asarray([
             [row["i"], row["j"], row["k"]] for row in lag_map[marker_id]

@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from src import mapping
+from src.grid_index import containing_cell_indices
 from src.weight_solver import GridSpec, build_solver, parse_inputs
 
 
@@ -135,7 +136,12 @@ def _weights_in_support_order(solved_lag, all_S_I, grid):
         }
         marker_weights = []
         for point in support[:, :3]:
-            cell = tuple(np.floor((point - grid.prob_lo) / grid.dx).astype(int))
+            cell = tuple(
+                int(value)
+                for value in containing_cell_indices(
+                    point, grid.prob_lo, grid.dx
+                )
+            )
             marker_weights.append(by_cell[cell])
         result.append(np.asarray(marker_weights))
     return result

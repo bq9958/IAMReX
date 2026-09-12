@@ -38,15 +38,19 @@ if __name__ == "__main__":
     server_rank = world.Get_size() - 1
     for exchange in range(2):
         positions = initial_positions.copy()
+        # Put marker 0 exactly on the lower x-face of its expected cell. The
+        # double-precision protocol plus snap-to-grid-line indexing must keep it
+        # on the high-index side of that face.
+        positions[0, 0] = grid.prob_lo[0] + 4 * grid.dx[0]
         positions[:, 0] += exchange * 0.01 * grid.dx[0]
-        positions = positions.astype(np.float32)
+        positions = positions.astype(np.float64)
         marker_count = np.asarray([len(positions)], dtype=np.int32)
 
         world.Send(
             [marker_count, MPI.INT], dest=server_rank, tag=TAG_MARKER_COUNT
         )
         world.Send(
-            [positions.reshape(-1), MPI.FLOAT],
+            [positions.reshape(-1), MPI.DOUBLE],
             dest=server_rank,
             tag=TAG_POSITIONS,
         )

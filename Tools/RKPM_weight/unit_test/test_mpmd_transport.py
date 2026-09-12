@@ -14,7 +14,7 @@ from unit_test.common import TEST_DIR, TOOL_ROOT
 
 
 class MPMDTransportTests(unittest.TestCase):
-    def test_mpmd_preserves_float32_order_across_two_exchanges(self):
+    def test_mpmd_preserves_double_positions_and_float32_weight_order(self):
         mpiexec = shutil.which("mpiexec")
         if mpiexec is None:
             self.skipTest("mpiexec is not available")

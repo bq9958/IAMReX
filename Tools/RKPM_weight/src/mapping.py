@@ -3,8 +3,9 @@
 This module provides marker-ID-to-coordinate and Lagrangian-to-Eulerian
 mappings. Eulerian points are global cell centers on the solver's finest grid,
 so their indices are computed directly as
-``floor((x - prob_lo) / dx_finest)`` without a local-grid offset. This avoids
-the ambiguity caused by the former ``int(sx/dx)`` truncation.
+``floor((x - prob_lo) / dx_finest)`` after snapping roundoff-close grid-line
+coordinates, without a local-grid offset. This avoids the ambiguity caused by
+the former ``int(sx/dx)`` truncation.
 """
 
 import ast
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Sequence, Union
 
 import numpy as np
+
+from .grid_index import containing_cell_indices
 
 
 NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
@@ -137,8 +140,9 @@ def build_lag_to_eul_map(
     """Build the Lagrangian-to-Eulerian force-spreading mapping.
 
     Eulerian points in ``all_S_I`` are global cell centers on the finest grid.
-    Therefore, ``floor((x - prob_lo) / dx_finest)`` recovers global cell indices
-    directly without a local-to-global offset.
+    Therefore, snapping roundoff-close grid-line coordinates and then applying
+    ``floor((x - prob_lo) / dx_finest)`` recovers global cell indices directly
+    without a local-to-global offset.
     """
     prob_lo = np.asarray(prob_lo, dtype=float)
     dx_finest = np.asarray(dx_finest, dtype=float)
@@ -151,10 +155,13 @@ def build_lag_to_eul_map(
         eulerian_data = []
 
         for m, (x_mn, y_mn, z_mn, Vcell) in enumerate(S_I):
-            # Global cell index = floor((cell center - prob_lo) / dx).
-            i = int(np.floor((x_mn - prob_lo[0]) / dx_finest[0]))
-            j = int(np.floor((y_mn - prob_lo[1]) / dx_finest[1]))
-            k = int(np.floor((z_mn - prob_lo[2]) / dx_finest[2]))
+            # Global cell index after snapping roundoff-close grid lines.
+            i, j, k = (
+                int(value)
+                for value in containing_cell_indices(
+                    np.asarray([x_mn, y_mn, z_mn]), prob_lo, dx_finest
+                )
+            )
 
             # Get the weight.
             w = modified_w[m]
