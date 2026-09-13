@@ -103,6 +103,10 @@ struct kernel{
     Real radius2{0.0};
     Real radius3{0.0};
     int geometry_type{1};  // 1 = sphere, 2 = ellipsoid; any other value aborts
+    // Ellipsoid orientation, degrees counter-clockwise about +z (as
+    // Tools/RKPM_weight --angle).  Used by the level set only; the 6DOF
+    // inertia in cal_momentum stays axis-aligned.
+    Real rotation_z{0.0};
     Real rho{0.0};
     int ml{0};
     int start_id{0};

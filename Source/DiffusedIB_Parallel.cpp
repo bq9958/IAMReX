@@ -39,6 +39,7 @@ namespace ParticleProperties{
     Vector<Real> _radius2;
     Vector<Real> _radius3;
     Vector<int> _geometry_type;
+    Vector<Real> _rotation_z;
     Real rd{0.0};
     Vector<int> TLX{}, TLY{},TLZ{},RLX{},RLY{},RLZ{};
     int euler_finest_level{0};
@@ -162,6 +163,14 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
             // Floor the denominator relative to the smallest semi-axis so that the
             // centre of the particle stays representable, including in FP32 builds.
             const Real denom_floor = Real(1.e-6) * amrex::min(a, amrex::min(b, c));
+            // Body orientation: the semi-axes (a, b, c) are rotated by rotation_z
+            // degrees counter-clockwise about +z through the centre -- the same
+            // convention as Tools/RKPM_weight --angle.  Grid offsets are taken back
+            // to the body frame with the inverse rotation.  At 0 deg cos = 1 and
+            // sin = 0 exactly, so unrotated cases are bit-for-bit unchanged.
+            const Real theta_z = current_kernel.rotation_z * Math::pi<Real>() / Real(180.0);
+            const Real cos_z = std::cos(theta_z);
+            const Real sin_z = std::sin(theta_z);
             ParallelFor(bx, [=]
                 AMREX_GPU_DEVICE(int i, int j, int k) noexcept
                 {
@@ -169,9 +178,9 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
                     Real Yn = j * dx[1] + plo[1];
                     Real Zn = k * dx[2] + plo[2];
 
-                    // Relative coordinates to ellipsoid center
-                    Real xp = Xn - Xp;
-                    Real yp = Yn - Yp;
+                    // Offsets from the ellipsoid center, in the body frame
+                    Real xp =  cos_z * (Xn - Xp) + sin_z * (Yn - Yp);
+                    Real yp = -sin_z * (Xn - Xp) + cos_z * (Yn - Yp);
                     Real zp = Zn - Zp;
 
                     // Compute ellipsoid level set function using the formula:
@@ -216,7 +225,12 @@ void CalculateSumU_cir (RealVect& sum,
 {
     auto const& E_data = E.const_arrays();
     auto const& pvf_data = pvf.const_arrays();
-    const Real d = Math::powi<3>(ParticleProperties::dx[0]);
+    // Cell volume, not dx^3: ParticleProperties::dx is per-axis, and on an
+    // anisotropic grid dx[0]^3 is wrong -- at dx:dy:dz = 1:2:2 it is 4x too
+    // small.  The moment arm a few lines below already uses dx[0]/dx[1]/dx[2].
+    const Real d = AMREX_D_TERM(ParticleProperties::dx[0],
+                              *ParticleProperties::dx[1],
+                              *ParticleProperties::dx[2]);
     GpuTuple<Real, Real, Real> tmpSum = ParReduce(TypeList<ReduceOpSum,ReduceOpSum,ReduceOpSum>{}, TypeList<Real, Real, Real>{},E, IntVect{0},
     [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept -> GpuTuple<Real, Real, Real>{
         auto E_ = E_data[box_no];
@@ -243,7 +257,12 @@ void CalculateSumT_cir (RealVect& sum,
 
     auto const& E_data = E.const_arrays();
     auto const& pvf_data = pvf.const_arrays();
-    const Real d = Math::powi<3>(ParticleProperties::dx[0]);
+    // Cell volume, not dx^3: ParticleProperties::dx is per-axis, and on an
+    // anisotropic grid dx[0]^3 is wrong -- at dx:dy:dz = 1:2:2 it is 4x too
+    // small.  The moment arm a few lines below already uses dx[0]/dx[1]/dx[2].
+    const Real d = AMREX_D_TERM(ParticleProperties::dx[0],
+                              *ParticleProperties::dx[1],
+                              *ParticleProperties::dx[2]);
     GpuTuple<Real, Real, Real> tmpSum = ParReduce(TypeList<ReduceOpSum,ReduceOpSum,ReduceOpSum>{}, TypeList<Real, Real, Real>{},E, IntVect{0},
     [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept -> GpuTuple<Real, Real, Real>{
         auto E_ = E_data[box_no];
@@ -473,6 +492,10 @@ void mParticle::InitParticles(const Vector<Real>& x,
             mKernel.radius3 = radius3[real_index];
         } else {
             mKernel.radius3 = radius[real_index];  // default to radius if not provided
+        }
+        // Optional z-rotation of the ellipsoid, degrees; only the level set uses it
+        if (real_index < ParticleProperties::_rotation_z.size()) {
+            mKernel.rotation_z = ParticleProperties::_rotation_z[real_index];
         }
         mKernel.Vp = Math::pi<Real>() * 4 / 3 * Math::powi<3>(radius[real_index]);
 
@@ -1638,6 +1661,7 @@ void Particles::Initialize()
         p_file.queryarr("radius2",   ParticleProperties::_radius2);
         p_file.queryarr("radius3",   ParticleProperties::_radius3);
         p_file.queryarr("geometry_type", ParticleProperties::_geometry_type);
+        p_file.queryarr("rotation_z", ParticleProperties::_rotation_z);
         p_file.query("RD",          ParticleProperties::rd);
         p_file.query("LOOP_NS",     ParticleProperties::loop_ns);
         p_file.query("LOOP_SOLID",  ParticleProperties::loop_solid);
