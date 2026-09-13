@@ -6,10 +6,17 @@
 
 solver = rkpm
 transport = mpmd
+# Number of markers evaluated in each vectorized solver batch.
+batch_size = 4096
+# PyTorch inference device for solver = ml: cpu, cuda, or auto.
+device = cpu
 
 # AMReX grid and geometry inputs.
 inputs = fixtures/real_case/inputs.3d.flow_past_ellipsoid
 geometry = none
+# For geometry generation, true means body-relative coordinates and false means
+# coordinates already in the AMReX world frame. Do not omit this selection when
+# geometry names a point-cloud file.
 body_frame = false
 angle = 0.0
 

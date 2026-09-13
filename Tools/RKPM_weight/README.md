@@ -1,5 +1,12 @@
 # RKPM Weight Tool
 
+## Architecture
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the maintained English code
+architecture diagrams, module responsibilities and runtime data contracts. The
+architecture document must be reviewed and updated in the same change whenever
+the code structure, runtime flow, interfaces or MPMD protocol changes.
+
 `main.py` separates the weight solver backend from the output transport through
 two independent runtime arguments:
 
@@ -7,6 +14,26 @@ two independent runtime arguments:
 |---|---|---|
 | `--solver` | `rkpm` / `ml` | Traditional RKPM solve or Transolver inference |
 | `--transport` | `file` / `mpmd` | Write `.id/.lag` files or return weights directly to IAMReX |
+| `--batch-size` | positive integer | Markers processed per vectorized batch (default: `4096`) |
+| `--device` | `cpu` / `cuda` / `auto` | PyTorch device used by the ML backend (default: `cpu`) |
+
+Both solver backends use batched array operations. Traditional RKPM assembles
+all polynomial bases and moment matrices in a batch and solves the independent
+10-by-10 systems with batched NumPy linear algebra. The ML backend performs
+coordinate preprocessing and Transolver inference in batches. In MPMD mode,
+the fixed stencil metadata is packed and validated once, then reused on every
+exchange; weights remain arrays throughout the solve and send path.
+
+`batch_size` limits temporary memory without changing marker or stencil order.
+The default is intended as a balanced starting point. Reduce it when the Python
+rank has limited memory; increase it only after benchmarking the target CPU or
+accelerator. Numerical results are independent of how markers are split into
+batches, up to normal floating-point roundoff.
+
+The default ML device remains `cpu` for portability and reproducibility. Use
+`device = cuda` on a GPU allocation to require CUDA, or `device = auto` to use
+CUDA when PyTorch can see a GPU and otherwise fall back to CPU. `--device` has
+no effect on the traditional NumPy RKPM backend.
 
 ## Python Environment
 
@@ -37,7 +64,7 @@ the corresponding configuration values, for example:
 
 ```bash
 python3 main.py --config /path/to/case/inputs.rkpm \
-  --solver ml --check-action abort
+  --solver ml --device cuda --batch-size 2048 --check-action abort
 ```
 
 The configuration controls the Python weight service. The IAMReX executable,
@@ -52,8 +79,25 @@ python3 main.py \
   --solver rkpm --transport file \
   --inputs /path/to/case/inputs.3d \
   --geometry /path/to/case/lagrangian_points.txt \
+  --body-frame \
   --output-prefix /path/to/case/rkpm_mappings
 ```
+
+Point-cloud generation requires an explicit coordinate frame. Choose exactly
+one of the following options:
+
+- Use `--body-frame` when the point-cloud coordinates are relative to the body.
+  The tool reads `particle_inputs.x`, `particle_inputs.y` and
+  `particle_inputs.z` from the AMReX inputs file and translates the points to
+  that world-coordinate center before constructing their grid stencils.
+- Use `--world-frame` when the point-cloud coordinates are already expressed in
+  the AMReX world coordinates bounded by `prob_lo` and `prob_hi`. No translation
+  is applied.
+
+Omitting both options is an error; the tool does not guess the coordinate
+frame. In a runtime configuration file, `body_frame = true` selects body-frame
+coordinates and `body_frame = false` explicitly selects world-frame
+coordinates.
 
 Read marker positions and stencils from existing `.id/.lag` files and recompute
 only the ML weights:
@@ -71,6 +115,11 @@ python3 main.py \
 
 The traditional RKPM backend can use the same mapping-recompute path by changing
 `--solver ml` to `--solver rkpm`.
+
+When building a new mapping from point-cloud geometry, all 3x3x3 support cells
+are constructed by broadcasting integer grid offsets. The generator therefore
+scales with the number of markers and their 27-point supports instead of
+repeatedly scanning the full Eulerian bounding grid for every marker.
 
 ## MPMD Mode
 
@@ -127,6 +176,6 @@ Run the complete unit-test suite from any working directory with:
 See `unit_test/README.md` for dependency handling, interpreter selection and
 details of the individual tests.
 
-The tool root intentionally contains only `src/`, `unit_test/`, `main.py` and
-this README. Bundled mapping/input fixtures, the standalone alignment verifier
-and generated reference images live under `unit_test/`.
+The tool root intentionally contains only `src/`, `unit_test/`, `main.py`,
+`README.md` and `ARCHITECTURE.md`. Bundled mapping/input fixtures, the standalone
+alignment verifier and generated reference images live under `unit_test/`.

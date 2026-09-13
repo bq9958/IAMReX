@@ -24,12 +24,10 @@ NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
 def build_lagrangian_id_to_coord_map(lagrangian_points: np.ndarray) -> Dict[int, tuple]:
     """Build ``{marker_id: (xp, yp, zp)}`` from an ``(Ne, 3)`` array."""
-    id_to_coord_map = {}
-
-    for lag_id, coord in enumerate(lagrangian_points):
-        id_to_coord_map[lag_id] = tuple(coord)
-
-    return id_to_coord_map
+    return {
+        lag_id: tuple(coord)
+        for lag_id, coord in enumerate(np.asarray(lagrangian_points))
+    }
 
 
 def load_id_map(filename: Union[str, Path]) -> Dict[int, tuple]:
@@ -149,43 +147,41 @@ def build_lag_to_eul_map(
     lag_to_eul_map = {}
 
     for lag_id in range(len(lagrangian_points)):
-        S_I = all_S_I[lag_id]  # Eulerian points and volumes in the support domain
-        modified_w = all_modified_w[lag_id]  # Corrected window-function values
-
-        eulerian_data = []
-
-        for m, (x_mn, y_mn, z_mn, Vcell) in enumerate(S_I):
-            # Global cell index after snapping roundoff-close grid lines.
-            i, j, k = (
-                int(value)
-                for value in containing_cell_indices(
-                    np.asarray([x_mn, y_mn, z_mn]), prob_lo, dx_finest
-                )
+        S_I = np.asarray(
+            all_S_I[lag_id], dtype=float
+        )  # Eulerian points and volumes in the support domain
+        modified_w = np.asarray(
+            all_modified_w[lag_id], dtype=float
+        ).reshape(-1)
+        if S_I.shape != (len(modified_w), 4):
+            raise ValueError(
+                f"Marker {lag_id} support must have shape "
+                f"({len(modified_w)}, 4), got {S_I.shape}"
             )
 
-            # Get the weight.
-            w = modified_w[m]
-
-            # Add the entry to the mapping.
-            eulerian_data.append({
-                "i": i,
-                "j": j,
-                "k": k,
-                "w": float(w),
+        cell_indices = containing_cell_indices(
+            S_I[:, :3], prob_lo, dx_finest
+        )
+        # np.lexsort uses the final key as primary: k, then j, then i.
+        order = np.lexsort(
+            (cell_indices[:, 0], cell_indices[:, 1], cell_indices[:, 2])
+        )
+        cell_indices = cell_indices[order]
+        modified_w = modified_w[order]
+        eps = float(V_lag) / S_I[order, 3]
+        eulerian_data = [
+            {
+                "i": int(cell[0]),
+                "j": int(cell[1]),
+                "k": int(cell[2]),
+                "w": float(weight),
                 "Vcell": 1.0,
-                "eps": float(V_lag) / float(Vcell)
-            })
-
-        # Sort by k, then j, then i (k-major order).
-        sort_keys = [(item["k"], item["j"], item["i"]) for item in eulerian_data]
-        # Convert to an array for lexsort.
-        sort_keys = np.array(sort_keys)  # shape: (N, 3)
-
-        # lexsort uses the last key as primary, hence the (i, j, k) argument.
-        indices = np.lexsort((sort_keys[:, 0], sort_keys[:, 1], sort_keys[:, 2]))
-
-        # Reorder entries using the sorted indices.
-        eulerian_data = [eulerian_data[idx] for idx in indices]
+                "eps": float(marker_eps),
+            }
+            for cell, weight, marker_eps in zip(
+                cell_indices, modified_w, eps
+            )
+        ]
 
         # Store the marker mapping.
         lag_to_eul_map[lag_id] = eulerian_data

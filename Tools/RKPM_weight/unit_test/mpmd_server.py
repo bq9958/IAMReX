@@ -20,18 +20,20 @@ class DeterministicSolver:
     def __init__(self):
         self.exchange = 0
 
-    def solve(self, positions, lag_map):
+    def solve_array(self, positions, lag_map):
         exchange = self.exchange
         self.exchange += 1
-        return {
-            marker_id: (
+        marker_ids = tuple(sorted(lag_map))
+        weights = np.asarray(
+            [
                 np.arange(27, dtype=float)
                 + 100.0 * marker_id
                 + 1000.0 * exchange
                 + positions[marker_id, 0]
-            )
-            for marker_id in sorted(lag_map)
-        }
+                for marker_id in marker_ids
+            ]
+        )
+        return marker_ids, weights
 
 
 if __name__ == "__main__":

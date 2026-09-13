@@ -1,8 +1,6 @@
 import numpy as np
 from src import visual
 from src.grid_index import containing_cell_indices
-import sys
-import ast
 
 # Read Lagrangian marker coordinates (xp, yp, zp) from a whitespace-delimited
 # point-cloud file. Lines beginning with # are comments.
@@ -18,44 +16,6 @@ def read_geometry_file(file_path):
             f"Geometry file must have 3 columns (X Y Z), got "
             f"{points.shape[1]}: {file_path}")
     return points
-
-# Legacy helper for reading marker positions from an ID file.
-# def load_lagrangian_from_id_file(filename):
-#     """
-#     Read an .id file and convert it to an (N, 3) NumPy array.
-#     """
-#     # Read the complete file.
-#     with open(filename, 'r') as f:
-#         content = f.read()
-#
-#     # Convert the valid Python dictionary literal to an object.
-#     try:
-#         data_dict = ast.literal_eval(content)
-#     except Exception as e:
-#         print(f"Failed to parse file: {e}")
-#         return None
-#
-#     # Determine N, assuming IDs are contiguous from 0 through N-1.
-#     if not data_dict:
-#         return np.empty((0, 3))
-#
-#     num_points = len(data_dict)
-#
-#     # Initialize the NumPy array.
-#     lagrangian_points = np.zeros((num_points, 3))
-#
-#     # Fill the array using dictionary keys as indices.
-#     for lag_id, coords in data_dict.items():
-#         lagrangian_points[lag_id] = coords
-#
-#     return lagrangian_points
-
-# Find the interval index of each point in a grid-coordinate array.
-def find_grid_indices(points, coords):
-    idxs = np.searchsorted(coords, points, side='right') - 1
-    if np.any(idxs < 0) or np.any(idxs >= len(coords) - 1):
-        raise ValueError("Some points are out of bounds.")
-    return idxs
 
 # Approximate ellipsoid surface area with the Knud Thomsen formula.
 def ellipsoid_area_approx(a, b, c):
@@ -79,7 +39,7 @@ def cylinder_area(radius, height):
     """
     return 2 * np.pi * radius * (radius + height)
 
-# Generate a 3D Eulerian grid and Lagrangian markers.
+# Generate affected Eulerian cells and Lagrangian marker support domains.
 #
 # Design: operate directly in the global coordinate system of the solver's
 # finest grid without selecting a local subregion or applying a local-to-global
@@ -92,7 +52,7 @@ def cylinder_area(radius, height):
 #      depend only on relative coordinates and are independent of the origin.
 #
 # Inputs: domain bounds, finest-cell size, point-cloud path, optional body-frame
-# center and z-axis rotation angle in degrees. Outputs include Eulerian points,
+# center and z-axis rotation angle in degrees. Outputs include affected Eulerian points,
 # transformed Lagrangian points, nearest grid points, support parameters and all
 # per-marker support domains.
 def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, angle=0.0):
@@ -123,7 +83,7 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
                        [ s,  c, 0.],
                        [0., 0., 1.]])
         lagrangian_points = (lagrangian_points - pivot) @ Rz.T + pivot
-    visual.PointCloud(lagrangian_points)
+    # visual.PointCloud(lagrangian_points)
 
     # Bounding region: expand point-cloud extrema by two finest-grid cells.
     pmin = lagrangian_points.min(axis=0)
@@ -154,22 +114,7 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
     print(f"[grid] finest index range: i[{i_lo},{i_hi}] j[{j_lo},{j_hi}] k[{k_lo},{k_hi}] "
           f"-> cells ({i_hi-i_lo+1}, {j_hi-j_lo+1}, {k_hi-k_lo+1})")
 
-    # Eulerian grid: global cell centers at (index + 0.5) * dx + prob_lo.
-    # x/y/z are cell edges; xc/yc/zc are cell centers.
-    x = prob_lo[0] + np.arange(i_lo, i_hi + 2) * dx
-    y = prob_lo[1] + np.arange(j_lo, j_hi + 2) * dy
-    z = prob_lo[2] + np.arange(k_lo, k_hi + 2) * dz
-    xc = 0.5 * (x[:-1] + x[1:])
-    yc = 0.5 * (y[:-1] + y[1:])
-    zc = 0.5 * (z[:-1] + z[1:])
-
-    XC, YC, ZC = np.meshgrid(xc, yc, zc, indexing='ij')
-
-    # Compute cell volumes.
-    Delta_V = np.full((len(x)-1, len(y)-1, len(z)-1), dx * dy * dz)
-
-    # Assemble Eulerian coordinates.
-    eulerian_points = np.vstack([XC.ravel(), YC.ravel(), ZC.ravel()]).T
+    cell_volume = float(np.prod(dx_finest))
 
     # Estimate marker area and thickness.
     Ne = len(lagrangian_points)
@@ -178,49 +123,50 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
     # area = cylinder_area(0.03815, 0.1145) / Ne
     thickness = min(dx, dy, dz)
     V_lag = area * thickness
-    print(f"Vl: {V_lag}, area:{area}, frac: {V_lag / Delta_V[0][0][0]}")
-
-    # Get the grid shape.
-    grid_shape = XC.shape
+    print(f"Vl: {V_lag}, area:{area}, frac: {V_lag / cell_volume}")
 
     # Find each marker's containing global cell.
     indices_ijk = containing_cell_indices(
         lagrangian_points, prob_lo, dx_finest
     )
-    # Convert global indices to local array indices.
-    local_ijk = (indices_ijk[:, 0] - i_lo, indices_ijk[:, 1] - j_lo, indices_ijk[:, 2] - k_lo)
-    nearest_indices = np.ravel_multi_index(local_ijk, dims=grid_shape)
-    nearest_grid_points = eulerian_points[nearest_indices]
+    nearest_grid_points = prob_lo + (indices_ijk + 0.5) * dx_finest
 
     # Compute support-domain scales.
     delta_I = np.full(Ne, dx + (1 / 1000) * dx)
     eta_I = np.full(Ne, dy + (1 / 1000) * dy)
     theta_I = np.full(Ne, dz + (1 / 1000) * dz)
 
-    # Build all per-marker support domains.
-    all_S_I = []
-    for idx in range(Ne):
+    # Construct every 3x3x3 support by broadcasting integer offsets. This is
+    # equivalent to searching the Eulerian point cloud around each marker, but
+    # scales as O(27*Nmarkers) instead of O(Ngrid*Nmarkers).
+    offset_grid = np.stack(
+        np.meshgrid(
+            np.arange(-1, 2),
+            np.arange(-1, 2),
+            np.arange(-1, 2),
+            indexing="ij",
+        ),
+        axis=-1,
+    ).reshape(-1, 3)
+    support_indices = indices_ijk[:, None, :] + offset_grid[None, :, :]
+    valid_support = np.all(
+        (support_indices >= 0) & (support_indices < n_fine), axis=2
+    )
+    support_points = prob_lo + (support_indices + 0.5) * dx_finest
 
-        nearest_point = nearest_grid_points[idx]
-        delta_I_lag = delta_I[idx]
-        eta_I_lag = eta_I[idx]
-        theta_I_lag = theta_I[idx]
-        # Select Eulerian points inside the rectangular support region.
-        mask_x = np.abs(eulerian_points[:, 0] - nearest_point[0]) < 1.5 * delta_I_lag
-        mask_y = np.abs(eulerian_points[:, 1] - nearest_point[1]) < 1.5 * eta_I_lag
-        mask_z = np.abs(eulerian_points[:, 2] - nearest_point[2]) < 1.5 * theta_I_lag
+    all_S_I = [
+        np.column_stack(
+            (
+                support_points[index, valid_support[index]],
+                np.full(np.count_nonzero(valid_support[index]), cell_volume),
+            )
+        )
+        for index in range(Ne)
+    ]
 
-        S_I_points = eulerian_points[mask_x & mask_y & mask_z]
-
-        # Find grid indices for all selected points.
-        i = find_grid_indices(S_I_points[:, 0], x)
-        j = find_grid_indices(S_I_points[:, 1], y)
-        k = find_grid_indices(S_I_points[:, 2], z)
-
-        volume_points = Delta_V[i,j,k]
-
-        # Combine coordinates and volume as (x, y, z, volume).
-        S_I = np.column_stack((S_I_points, volume_points.reshape(-1, 1)))
-        all_S_I.append(S_I)
+    # Post-solve conservation checks need only cells touched by a stencil, not
+    # every cell in the point-cloud bounding box.
+    affected_indices = np.unique(support_indices[valid_support], axis=0)
+    eulerian_points = prob_lo + (affected_indices + 0.5) * dx_finest
 
     return eulerian_points, Ne, lagrangian_points, nearest_grid_points, delta_I, eta_I, theta_I, all_S_I, V_lag

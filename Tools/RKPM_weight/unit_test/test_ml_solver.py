@@ -60,6 +60,18 @@ class MLWeightSolverTests(unittest.TestCase):
         )
         self.assertLess(errors.moment_error, 1.0e-2)
 
+    def test_ml_batching_preserves_marker_and_stencil_order(self):
+        grid, positions, _, lag_map = build_small_fixture()
+        solver = MLWeightSolver(
+            grid, self.model_dir, self.model_code, batch_size=1
+        )
+        chunked_ids, chunked = solver.solve_array(positions, lag_map)
+        solver.batch_size = len(positions)
+        single_ids, single_batch = solver.solve_array(positions, lag_map)
+
+        self.assertEqual(chunked_ids, single_ids)
+        np.testing.assert_allclose(chunked, single_batch, rtol=1.0e-6, atol=1.0e-7)
+
 
 if __name__ == "__main__":
     unittest.main()

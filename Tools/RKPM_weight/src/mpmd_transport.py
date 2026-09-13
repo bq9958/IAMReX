@@ -10,6 +10,7 @@ import time
 import numpy as np
 
 from .weight_solver import (
+    fixed_stencil_center_indices,
     positions_as_array,
     stencil_centers,
     validate_fixed_stencils,
@@ -67,9 +68,26 @@ def serve_mpmd(
         if local.Get_size() != 1:
             raise RuntimeError("The Python RKPM server supports exactly one MPI rank")
 
-        marker_ids = validate_stencils(lag_map, expected_size=RKPM_STENCIL_SIZE)
+        prepared = solver.prepare(lag_map) if hasattr(solver, "prepare") else None
+        if prepared is None:
+            marker_ids = validate_stencils(
+                lag_map, expected_size=RKPM_STENCIL_SIZE
+            )
+            cell_indices = None
+            centers = stencil_centers(lag_map, grid, marker_ids)
+        else:
+            marker_ids = list(prepared.marker_ids)
+            if (
+                len(prepared.groups) != 1
+                or prepared.groups[0].cell_indices.shape[1] != RKPM_STENCIL_SIZE
+            ):
+                raise ValueError("MPMD requires one rectangular 27-point stencil")
+            cell_indices = prepared.groups[0].cell_indices
+            centers = grid.prob_lo + (cell_indices + 0.5) * grid.dx
         expected_markers = len(marker_ids)
-        centers = np.asarray(stencil_centers(lag_map, grid, marker_ids))
+        expected_center_indices = fixed_stencil_center_indices(
+            lag_map, marker_ids, cell_indices=cell_indices
+        )
         cfd_root = 0
         step = 0
         print(
@@ -104,13 +122,29 @@ def serve_mpmd(
             received = time.perf_counter()
 
             # C++ side does not return i/j/k, so the fixed stencil must remain valid.
-            validate_fixed_stencils(positions, lag_map, grid, marker_ids)
-            stencil_validated = time.perf_counter()
-            weights = solver.solve(positions, lag_map)
-            solved = time.perf_counter()
-            weight_array = weights_as_array(weights, marker_ids).astype(
-                np.float32, copy=False
+            validate_fixed_stencils(
+                positions,
+                lag_map,
+                grid,
+                marker_ids,
+                expected_centers=expected_center_indices,
             )
+            stencil_validated = time.perf_counter()
+            if hasattr(solver, "solve_array"):
+                solved_ids, weight_array = solver.solve_array(positions, lag_map)
+                if tuple(solved_ids) != tuple(marker_ids):
+                    raise ValueError("Solver output marker IDs changed during MPMD")
+            else:
+                weights = solver.solve(positions, lag_map)
+                weight_array = weights_as_array(weights, marker_ids)
+            solved = time.perf_counter()
+            weight_array = np.asarray(weight_array, dtype=np.float32)
+            if weight_array.shape != (marker_count, RKPM_STENCIL_SIZE):
+                raise ValueError(
+                    "MPMD weights must have shape "
+                    f"({marker_count}, {RKPM_STENCIL_SIZE}), "
+                    f"got {weight_array.shape}"
+                )
             packed = time.perf_counter()
             step += 1
             check_due = (

@@ -31,9 +31,17 @@ regression additionally uses the bundled 2830-marker files under
 
 ## Test Details
 
-Seven `test_*.py` files currently define nine `unittest` test methods;
-`test_validation.py` and `test_fixed_stencil.py` contain two methods each, and
-each other file contains one.
+Twelve `test_*.py` files currently define nineteen `unittest` test methods.
+
+### `test_architecture_doc.py`
+
+#### `ArchitectureDocumentTests.test_architecture_document_lists_every_production_module`
+
+- **What it tests:** The maintained architecture document does not silently
+  omit a production Python module.
+- **How it tests it:** It discovers `main.py` and every `src/*.py` file, then
+  requires each repository-relative module path to appear in
+  `ARCHITECTURE.md`.
 
 ### `test_rkpm_reproduction.py`
 
@@ -115,11 +123,12 @@ each other file contains one.
   across repeated exchanges, and shuts down cleanly.
 - **How it tests it:** It starts two real MPI application contexts.
   `mpmd_client.py` emulates the C++ root rank, while `mpmd_server.py` runs the
-  production `serve_mpmd()` loop with deterministic weights that encode the
-  exchange, marker, stencil position and received x-coordinate. One marker is
-  placed exactly on a grid line to exercise the double-plus-snap path. The
-  client performs two exact array comparisons, sends a zero marker count, and
-  the parent process enforces a 30-second deadlock timeout.
+  production `serve_mpmd()` loop and its direct array-output fast path with
+  deterministic weights that encode the exchange, marker, stencil position and
+  received x-coordinate. One marker is placed exactly on a grid line to
+  exercise the double-plus-snap path. The client performs two exact array
+  comparisons, sends a zero marker count, and the parent process enforces a
+  30-second deadlock timeout.
 
 This test verifies the Python server and the agreed wire protocol; it does not
 compile or execute the IAMReX C++ implementation itself.
@@ -136,6 +145,87 @@ compile or execute the IAMReX C++ implementation itself.
   requires RMSE below `2e-3`, maximum weight error below `1e-2`, and maximum
   first-moment error below `1e-2` cell. It skips when PyTorch or model files are
   unavailable.
+
+#### `MLWeightSolverTests.test_ml_batching_preserves_marker_and_stencil_order`
+
+- **What it tests:** Splitting Transolver inference into bounded batches does
+  not change marker order, stencil order or predicted weights beyond normal
+  floating-point roundoff.
+- **How it tests it:** It evaluates the same markers first one at a time and
+  then in one batch with the same loaded model, compares the returned marker IDs
+  and checks all weights with tight `1e-6`/`1e-7` tolerances.
+
+### `test_vectorized_rkpm.py`
+
+#### `VectorizedRKPMTests.test_vectorized_batches_match_independent_scalar_equations`
+
+- **What it tests:** The vectorized traditional RKPM implementation preserves
+  the original kernel, quadratic polynomial basis, moment matrix and corrected
+  weight equations.
+- **How it tests it:** The test contains an independent scalar-loop reference
+  implementation, evaluates the same anisotropic three-marker fixture with both
+  paths and compares every weight to near machine precision.
+
+#### `VectorizedRKPMTests.test_solver_chunking_preserves_marker_and_stencil_order`
+
+- **What it tests:** The traditional RKPM result is invariant to the configured
+  marker batch size.
+- **How it tests it:** It compares a single three-marker batch with batches of
+  two markers and requires identical IDs and exactly equal weight arrays.
+
+### `test_support_generation.py`
+
+#### `SupportGenerationTests.test_generated_supports_are_complete_and_use_expected_cells`
+
+- **What it tests:** Vectorized point-cloud support generation creates the
+  expected 3x3x3 cells on a nonzero-origin, anisotropic grid and reports exactly
+  the union of affected Eulerian cells.
+- **How it tests it:** It writes a temporary four-marker geometry, disables only
+  plotting, reconstructs all support indices and verifies the 27 offsets,
+  nearest cell centers, cell volumes and affected-cell union.
+
+### `test_diagnostics.py`
+
+#### `VectorizedDiagnosticTests.test_rkpm_weights_conserve_volume_force_and_torque`
+
+- **What it tests:** The vectorized post-solve diagnostics preserve the volume,
+  total-force and total-torque checks used by file-mode generation.
+- **How it tests it:** It spreads an asymmetric vector force through RKPM
+  weights on overlapping synthetic stencils, accumulates contributions with
+  array scatter operations and requires all three conservation residuals to be
+  below `1e-10`.
+
+### `test_runtime_config.py`
+
+#### `RuntimeConfigTests.test_config_loads_batch_size_and_device`
+
+- **What it tests:** The persistent run configuration recognizes the new batch
+  size and ML device controls.
+- **How it tests it:** It parses the bundled `inputs.rkpm` and compares both
+  values with the documented defaults in that file.
+
+#### `RuntimeConfigTests.test_command_line_overrides_batch_size_and_device`
+
+- **What it tests:** Explicit command-line tuning still takes precedence over
+  values loaded from the configuration file.
+- **How it tests it:** It parses the same configuration with different
+  `--batch-size` and `--device` arguments and verifies the overridden values.
+
+#### `RuntimeConfigTests.test_geometry_generation_requires_explicit_coordinate_frame`
+
+- **What it tests:** New `.id/.lag` generation cannot silently guess whether a
+  point cloud uses body or world coordinates.
+- **How it tests it:** It requests file-mode generation with a geometry path but
+  without either frame option and checks that argument parsing exits with the
+  dedicated coordinate-frame error.
+
+#### `RuntimeConfigTests.test_geometry_generation_accepts_body_or_world_frame`
+
+- **What it tests:** Both supported coordinate systems remain available when
+  they are selected explicitly.
+- **How it tests it:** It parses otherwise identical geometry-generation
+  commands with `--body-frame` and `--world-frame`, then verifies their distinct
+  Boolean values.
 
 ## Supporting Files
 

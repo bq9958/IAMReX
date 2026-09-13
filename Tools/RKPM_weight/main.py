@@ -11,7 +11,12 @@ import numpy as np
 
 from src import mapping
 from src.grid_index import containing_cell_indices
-from src.weight_solver import GridSpec, build_solver, parse_inputs
+from src.weight_solver import (
+    DEFAULT_BATCH_SIZE,
+    GridSpec,
+    build_solver,
+    parse_inputs,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +41,8 @@ CONFIG_PATH_KEYS = {
 CONFIG_VALUE_KEYS = {
     "solver": ("solver", str),
     "transport": ("transport", str),
+    "batch_size": ("batch_size", int),
+    "device": ("device", str),
     "body_frame": ("body_frame", None),
     "angle": ("angle", float),
     "check_action": ("check_action", str),
@@ -181,15 +188,15 @@ def generate_from_geometry(args, grid, solver):
         ) / 2.0
         print(f"[inputs] center (bbox) = {center.tolist()}")
 
-    visual.visualize_results(
-        lagrangian_points,
-        nearest_grid_points,
-        delta_I,
-        eta_I,
-        theta_I,
-        all_S_I,
-        target_idx=0,
-    )
+    # visual.visualize_results(
+    #     lagrangian_points,
+    #     nearest_grid_points,
+    #     delta_I,
+    #     eta_I,
+    #     theta_I,
+    #     all_S_I,
+    #     target_idx=0,
+    # )
 
     id_map = mapping.build_lagrangian_id_to_coord_map(lagrangian_points)
     # Stencil/eps data is backend-independent. Use zeros until the solver runs.
@@ -249,6 +256,15 @@ def run(args):
         grid,
         model_dir=args.model_dir,
         model_code=args.model_code,
+        batch_size=args.batch_size,
+        device=args.device,
+    )
+    device_text = (
+        f", device={solver.device_name}" if solver.name == "ml" else ""
+    )
+    print(
+        f"[solver] backend={solver.name}, batch_size={solver.batch_size}"
+        f"{device_text}"
     )
 
     if args.transport == "mpmd":
@@ -301,6 +317,21 @@ def parse_args(argv=None):
         choices=("file", "mpmd"),
         default=config_defaults.get("transport", "file"),
         help="Output transport: .id/.lag files or direct MPMD transfer (default: file)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=config_defaults.get("batch_size", DEFAULT_BATCH_SIZE),
+        help=(
+            "Markers per vectorized RKPM/ML batch; reduce this value to limit "
+            f"memory use (default: {DEFAULT_BATCH_SIZE})"
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda", "auto"),
+        default=config_defaults.get("device", "cpu"),
+        help="PyTorch inference device for the ML backend (default: cpu)",
     )
     parser.add_argument(
         "--inputs",
@@ -359,7 +390,10 @@ def parse_args(argv=None):
         dest="body_frame",
         help="Treat --geometry coordinates as world-frame data",
     )
-    parser.set_defaults(body_frame=config_defaults.get("body_frame", False))
+    # Keep an unspecified frame distinct from an explicit world-frame choice.
+    # Geometry generation needs this distinction because body-frame point clouds
+    # must be translated by the particle center before their grid bounds are used.
+    parser.set_defaults(body_frame=config_defaults.get("body_frame"))
     parser.add_argument(
         "--angle",
         type=float,
@@ -395,6 +429,20 @@ def parse_args(argv=None):
         parser.error("--solver must be either rkpm or ml")
     if args.transport not in {"file", "mpmd"}:
         parser.error("--transport must be either file or mpmd")
+    if (
+        args.transport == "file"
+        and args.geometry is not None
+        and args.body_frame is None
+    ):
+        parser.error(
+            "file-mode geometry generation requires an explicit coordinate "
+            "frame: use --body-frame for coordinates relative to the particle "
+            "center, or --world-frame for coordinates already in the AMReX domain"
+        )
+    if args.batch_size <= 0:
+        parser.error("--batch-size must be a positive integer")
+    if args.device not in {"cpu", "cuda", "auto"}:
+        parser.error("--device must be cpu, cuda, or auto")
     if args.check_action not in {"off", "warn", "abort"}:
         parser.error("--check-action must be off, warn, or abort")
     if args.check_interval <= 0:
