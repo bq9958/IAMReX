@@ -144,7 +144,10 @@ def compute_b_I(M_I):
         )
     right_hand_side = np.zeros(matrices.shape[:-1], dtype=float)
     right_hand_side[..., 0] = 1.0
-    return np.linalg.solve(matrices, right_hand_side)
+    # NumPy >= 2.0 treats b as a vector only when b.ndim == 1. Represent the
+    # batched right-hand sides as explicit columns so this works consistently
+    # across NumPy versions, then remove the singleton column from the result.
+    return np.linalg.solve(matrices, right_hand_side[..., None])[..., 0]
 
 
 def modified_window_function(S_I, lagrangian_point, d_I, delta, eta, theta, V_lag):

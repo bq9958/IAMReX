@@ -31,7 +31,7 @@ regression additionally uses the bundled 2830-marker files under
 
 ## Test Details
 
-Twelve `test_*.py` files currently define nineteen `unittest` test methods.
+Twelve `test_*.py` files currently define twenty `unittest` test methods.
 
 ### `test_architecture_doc.py`
 
@@ -156,6 +156,14 @@ compile or execute the IAMReX C++ implementation itself.
   and checks all weights with tight `1e-6`/`1e-7` tolerances.
 
 ### `test_vectorized_rkpm.py`
+
+#### `VectorizedRKPMTests.test_batched_solve_uses_explicit_rhs_column_for_numpy_2`
+
+- **What it tests:** Batched RKPM moment solves use a right-hand-side shape that
+  is compatible with both NumPy 1.x and NumPy 2.x.
+- **How it tests it:** It intercepts `np.linalg.solve`, requires an explicit
+  `(N, 10, 1)` column-vector batch, and verifies that `compute_b_I()` removes
+  only the singleton column and returns the expected `(N, 10)` corrections.
 
 #### `VectorizedRKPMTests.test_vectorized_batches_match_independent_scalar_equations`
 

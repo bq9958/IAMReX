@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -58,6 +59,26 @@ def _scalar_reference(support, marker, scales, lagrangian_volume):
 
 
 class VectorizedRKPMTests(unittest.TestCase):
+    def test_batched_solve_uses_explicit_rhs_column_for_numpy_2(self):
+        matrices = np.broadcast_to(np.eye(10), (3, 10, 10)).copy()
+        original_solve = np.linalg.solve
+
+        def require_explicit_columns(coefficients, right_hand_side):
+            self.assertEqual(right_hand_side.shape, (3, 10, 1))
+            return original_solve(coefficients, right_hand_side)
+
+        with mock.patch.object(
+            window.np.linalg,
+            "solve",
+            side_effect=require_explicit_columns,
+        ):
+            corrections = window.compute_b_I(matrices)
+
+        expected = np.zeros((3, 10))
+        expected[:, 0] = 1.0
+        self.assertEqual(corrections.shape, (3, 10))
+        np.testing.assert_array_equal(corrections, expected)
+
     def test_vectorized_batches_match_independent_scalar_equations(self):
         grid, positions, _, lag_map = build_small_fixture()
         marker_ids = tuple(sorted(lag_map))

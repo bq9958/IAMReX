@@ -54,7 +54,7 @@ flowchart TB
     end
 
     subgraph Verification[Regression protection]
-        UnitTests["unit_test/<br/>19 unit and integration tests"]
+        UnitTests["unit_test/<br/>20 unit and integration tests"]
         RealFixture["2830-marker real-case fixture"]
         MPIEmulator["Python MPI client<br/>emulates the C++ root rank"]
     end
@@ -122,7 +122,7 @@ flowchart LR
         Kernel["Evaluate separable<br/>three-point kernel"]
         Basis["Build 10-term<br/>quadratic basis"]
         Moment["Assemble batched<br/>10 x 10 moment matrices"]
-        LinearSolve["Batched np.linalg.solve"]
+        LinearSolve["Batched np.linalg.solve<br/>explicit column RHS for NumPy 1.x/2.x"]
         Corrected["Corrected RKPM weights"]
         Kernel --> Moment
         Basis --> Moment --> LinearSolve --> Corrected
