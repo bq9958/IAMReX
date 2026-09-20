@@ -162,9 +162,9 @@ def build_lag_to_eul_map(
         cell_indices = containing_cell_indices(
             S_I[:, :3], prob_lo, dx_finest
         )
-        # np.lexsort uses the final key as primary: k, then j, then i.
+        # np.lexsort uses the final key as primary: i, then j, then k.
         order = np.lexsort(
-            (cell_indices[:, 0], cell_indices[:, 1], cell_indices[:, 2])
+            (cell_indices[:, 2], cell_indices[:, 1], cell_indices[:, 0])
         )
         cell_indices = cell_indices[order]
         modified_w = modified_w[order]
