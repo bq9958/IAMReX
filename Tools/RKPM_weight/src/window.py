@@ -33,7 +33,8 @@ def window_function_d(r):
     )
     return float(result) if result.ndim == 0 else result
 
-
+# input : relative displacements of stencil points from the lagrangian point, shape (..., 3)
+# output: polynomial basis evaluated at each displacement, shape (..., 10)
 def polynomial_basis(displacements: np.ndarray) -> np.ndarray:
     """Return ``[1,x,y,z,xy,yz,zx,x^2,y^2,z^2]`` for each displacement."""
     displacements = np.asarray(displacements, dtype=float)

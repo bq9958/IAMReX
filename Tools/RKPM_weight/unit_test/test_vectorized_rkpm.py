@@ -1,129 +1,285 @@
 # SPDX-FileCopyrightText: 2026 IAMReX contributors
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Equivalence tests for vectorized and batched traditional RKPM solves."""
+"""Real-case regression tests for the vectorized traditional RKPM solver."""
 
 from __future__ import annotations
 
+import importlib.util
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
 
-from unit_test.common import build_small_fixture
+from unit_test.common import TEST_DIR
 
-from src import window
-from src.weight_solver import RKPMSolver, stencil_centers
-
-
-def _scalar_kernel(value: float) -> float:
-    absolute = abs(value)
-    if 0.5 <= absolute <= 1.5:
-        return (1.0 / 6.0) * (
-            5.0
-            - 3.0 * absolute
-            - np.sqrt(1.0 - 3.0 * (1.0 - absolute) ** 2)
-        )
-    if absolute <= 0.5:
-        return (1.0 / 3.0) * (1.0 + np.sqrt(1.0 - 3.0 * value**2))
-    return 0.0
+from src import mapping, window
+from src.weight_solver import GridSpec, RKPMSolver, stencil_centers
 
 
-def _scalar_reference(support, marker, scales, lagrangian_volume):
-    """Evaluate the pre-vectorization equations with explicit scalar loops."""
-    moment = np.zeros((10, 10))
-    basis_rows = []
-    base_weights = []
-    for x, y, z, cell_volume in support:
-        displacement = np.asarray([x, y, z]) - marker
-        dx, dy, dz = displacement
-        basis = np.asarray(
-            [1.0, dx, dy, dz, dx * dy, dy * dz, dz * dx, dx**2, dy**2, dz**2]
-        )
-        normalized = displacement / scales
-        base = (
-            _scalar_kernel(float(normalized[0]))
-            * _scalar_kernel(float(normalized[1]))
-            * _scalar_kernel(float(normalized[2]))
-            * cell_volume
-            / lagrangian_volume
-        )
-        moment += np.outer(basis, basis) * base
-        basis_rows.append(basis)
-        base_weights.append(base)
+REAL_CASE_DIR = TEST_DIR / "fixtures" / "real_case"
+LEGACY_ROOT = TEST_DIR / "fixtures" / "RKPM_weight_commit_2cf74f4" / "src"
+ARTIFACTS_DIR = TEST_DIR / "artifacts"
+LEGACY_LAG_ARTIFACT = ARTIFACTS_DIR / "rkpm_mappings_commit_2cf74f4.lag"
+VECTORIZED_LAG_ARTIFACT = ARTIFACTS_DIR / "rkpm_mappings_vectorized.lag"
+FLOAT64_EPSILON = np.finfo(np.float64).eps
+MOMENT_PRECISION_FACTOR = 64.0
+WEIGHT_NORM_TOLERANCE = 1.0e-11
 
-    right_hand_side = np.zeros(10)
-    right_hand_side[0] = 1.0
-    correction = np.linalg.solve(moment, right_hand_side)
-    return np.asarray(base_weights) * (np.asarray(basis_rows) @ correction)
+
+def _load_legacy_module(name: str, path: Path):
+    """Load one module from the frozen pre-vectorization fixture."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load legacy RKPM module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class VectorizedRKPMTests(unittest.TestCase):
-    def test_batched_solve_uses_explicit_rhs_column_for_numpy_2(self):
-        matrices = np.broadcast_to(np.eye(10), (3, 10, 10)).copy()
-        original_solve = np.linalg.solve
-
-        def require_explicit_columns(coefficients, right_hand_side):
-            self.assertEqual(right_hand_side.shape, (3, 10, 1))
-            return original_solve(coefficients, right_hand_side)
-
-        with mock.patch.object(
-            window.np.linalg,
-            "solve",
-            side_effect=require_explicit_columns,
-        ):
-            corrections = window.compute_b_I(matrices)
-
-        expected = np.zeros((3, 10))
-        expected[:, 0] = 1.0
-        self.assertEqual(corrections.shape, (3, 10))
-        np.testing.assert_array_equal(corrections, expected)
-
-    def test_vectorized_batches_match_independent_scalar_equations(self):
-        grid, positions, _, lag_map = build_small_fixture()
-        marker_ids = tuple(sorted(lag_map))
-        centers = stencil_centers(lag_map, grid, marker_ids)
-        cell_volume = float(np.prod(grid.dx))
-        supports = np.empty((len(marker_ids), 27, 4))
-        supports[..., :3] = centers
-        supports[..., 3] = cell_volume
-        lagrangian_volumes = np.asarray(
-            [lag_map[marker_id][0]["eps"] * cell_volume for marker_id in marker_ids]
+    @classmethod
+    def setUpClass(cls):
+        cls.legacy_window = _load_legacy_module(
+            "rkpm_legacy_window_2cf74f4",
+            LEGACY_ROOT / "window.py",
         )
-        scales = grid.dx * 1.001
-
-        vectorized = window.compute_modified_window_functions_batch(
-            supports,
-            positions,
-            scales[0],
-            scales[1],
-            scales[2],
-            lagrangian_volumes,
+        cls.legacy_mapping = _load_legacy_module(
+            "rkpm_legacy_mapping_2cf74f4",
+            LEGACY_ROOT / "mapping.py",
         )
-        scalar = np.asarray(
+
+        cls.inputs_path = REAL_CASE_DIR / "inputs.3d.flow_past_ellipsoid"
+        cls.id_path = REAL_CASE_DIR / "rkpm_mappings.id"
+        cls.lag_path = REAL_CASE_DIR / "rkpm_mappings.lag"
+        cls.grid = GridSpec.from_inputs(cls.inputs_path)
+        cls.id_map = mapping.load_id_map(cls.id_path)
+        cls.lag_map = mapping.load_lag_map(cls.lag_path)
+        cls.marker_ids = tuple(
+            mapping.validate_mapping_ids(cls.id_map, cls.lag_map)
+        )
+        cls.positions = np.asarray(
+            [cls.id_map[marker_id] for marker_id in cls.marker_ids],
+            dtype=float,
+        )
+
+        centers = stencil_centers(cls.lag_map, cls.grid, cls.marker_ids)
+        cell_volume = float(np.prod(cls.grid.dx))
+        cls.supports = np.empty((*centers.shape[:2], 4), dtype=float)
+        cls.supports[..., :3] = centers
+        cls.supports[..., 3] = cell_volume
+        cls.scales = cls.grid.dx * 1.001
+
+        cls.lagrangian_volumes = np.empty(len(cls.marker_ids), dtype=float)
+        for marker_index, marker_id in enumerate(cls.marker_ids):
+            eps = np.asarray(
+                [row["eps"] for row in cls.lag_map[marker_id]], dtype=float
+            )
+            np.testing.assert_array_equal(eps, np.full_like(eps, eps[0]))
+            cls.lagrangian_volumes[marker_index] = eps[0] * cell_volume
+
+        cls.legacy_moment_matrices = np.asarray(
             [
-                _scalar_reference(
-                    supports[index],
-                    positions[index],
-                    scales,
-                    lagrangian_volumes[index],
+                cls.legacy_window.compute_m_ab_matrix(
+                    cls.supports[index],
+                    cls.positions[index],
+                    cls.scales[0],
+                    cls.scales[1],
+                    cls.scales[2],
+                    cls.lagrangian_volumes[index],
                 )
-                for index in range(len(marker_ids))
+                for index in range(len(cls.marker_ids))
             ]
         )
-        np.testing.assert_allclose(vectorized, scalar, rtol=1.0e-11, atol=1.0e-12)
 
-    def test_solver_chunking_preserves_marker_and_stencil_order(self):
-        grid, positions, _, lag_map = build_small_fixture()
-        single_ids, single_batch = RKPMSolver(
-            grid, batch_size=len(positions)
-        ).solve_array(positions, lag_map)
-        chunked_ids, chunked = RKPMSolver(
-            grid, batch_size=2
-        ).solve_array(positions, lag_map)
+        # Capture the exact matrices assembled inside the production batched
+        # path without duplicating its einsum expression in this test.
+        correction_shape = (len(cls.marker_ids), window.POLYNOMIAL_SIZE)
+        with mock.patch.object(
+            window,
+            "compute_b_I",
+            return_value=np.zeros(correction_shape, dtype=float),
+        ) as solve_mock:
+            window.compute_modified_window_functions_batch(
+                cls.supports,
+                cls.positions,
+                cls.scales[0],
+                cls.scales[1],
+                cls.scales[2],
+                cls.lagrangian_volumes,
+            )
+        solve_mock.assert_called_once()
+        cls.vectorized_moment_matrices = np.asarray(
+            solve_mock.call_args.args[0], dtype=float
+        ).copy()
 
-        self.assertEqual(single_ids, chunked_ids)
-        np.testing.assert_allclose(chunked, single_batch, rtol=0.0, atol=0.0)
+    def _assert_moment_matrices_match(self):
+        differences = np.max(
+            np.abs(
+                self.vectorized_moment_matrices
+                - self.legacy_moment_matrices
+            ),
+            axis=(1, 2),
+        )
+        scales = np.maximum(
+            1.0,
+            np.max(np.abs(self.legacy_moment_matrices), axis=(1, 2)),
+        )
+        limits = MOMENT_PRECISION_FACTOR * FLOAT64_EPSILON * scales
+        self.assertTrue(
+            np.all(differences <= limits),
+            msg=(
+                "Vectorized moment matrices differ from commit 2cf74f4 "
+                "beyond float64 machine-precision accumulation error: "
+                f"max normalized error={np.max(differences / scales):.17e}, "
+                f"limit={MOMENT_PRECISION_FACTOR * FLOAT64_EPSILON:.17e}"
+            ),
+        )
+        return float(np.max(differences))
+
+    def _assert_weights_match(self, vectorized_weights, legacy_weights):
+        differences = np.max(
+            np.abs(vectorized_weights - legacy_weights), axis=1
+        )
+        scales = np.max(np.abs(legacy_weights), axis=1)
+        normalized = differences / scales
+        self.assertTrue(
+            np.all(normalized <= WEIGHT_NORM_TOLERANCE),
+            msg=(
+                "Vectorized weights differ from commit 2cf74f4 beyond the "
+                "real-case regression tolerance: "
+                f"max markerwise norm error={np.max(normalized):.17e}, "
+                f"limit={WEIGHT_NORM_TOLERANCE:.17e}"
+            ),
+        )
+        return float(np.max(differences)), float(np.max(normalized))
+
+    def test_real_case_moment_matrices_match_legacy_commit_at_machine_precision(self):
+        maximum_error = self._assert_moment_matrices_match()
+        print(
+            "[vectorized-rkpm] moment matrix maximum absolute error: "
+            f"{maximum_error:.17e}",
+            flush=True,
+        )
+
+    def test_real_case_weights_and_lag_output_match_legacy_commit(self):
+        # Do not compare downstream weights unless their input moment matrices
+        # have already passed the stricter machine-precision check.
+        self._assert_moment_matrices_match()
+
+        legacy_weights = np.asarray(
+            [
+                self.legacy_window.modified_window_function(
+                    self.supports[index],
+                    self.positions[index],
+                    self.legacy_window.compute_b_I(
+                        self.legacy_moment_matrices[index]
+                    ),
+                    self.scales[0],
+                    self.scales[1],
+                    self.scales[2],
+                    self.lagrangian_volumes[index],
+                )
+                for index in range(len(self.marker_ids))
+            ]
+        )
+        solved_ids, vectorized_weights = RKPMSolver(
+            self.grid,
+            batch_size=512,
+        ).solve_array(self.positions, self.lag_map)
+
+        self.assertEqual(tuple(solved_ids), self.marker_ids)
+        self._assert_weights_match(vectorized_weights, legacy_weights)
+
+        # The legacy fixture has one physical Lagrangian volume shared by all
+        # markers. Assert that contract before calling its scalar mapping API.
+        np.testing.assert_array_equal(
+            self.lagrangian_volumes,
+            np.full_like(
+                self.lagrangian_volumes, self.lagrangian_volumes[0]
+            ),
+        )
+        legacy_lag_map = self.legacy_mapping.build_lag_to_eul_map(
+            self.positions,
+            self.supports,
+            legacy_weights,
+            self.grid.prob_lo,
+            self.grid.dx,
+            self.lagrangian_volumes[0],
+        )
+        vectorized_lag_map = mapping.replace_mapping_weights(
+            self.lag_map,
+            {
+                marker_id: vectorized_weights[index]
+                for index, marker_id in enumerate(self.marker_ids)
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            legacy_prefix = Path(directory) / "legacy"
+            vectorized_prefix = Path(directory) / "vectorized"
+            self.legacy_mapping.save_mappings_txt(
+                self.id_map, legacy_lag_map, str(legacy_prefix)
+            )
+            mapping.save_mappings_txt(
+                self.id_map, vectorized_lag_map, str(vectorized_prefix)
+            )
+            legacy_lag_path = legacy_prefix.with_suffix(".lag")
+            vectorized_lag_path = vectorized_prefix.with_suffix(".lag")
+
+            ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_lag_path, LEGACY_LAG_ARTIFACT)
+            shutil.copyfile(vectorized_lag_path, VECTORIZED_LAG_ARTIFACT)
+
+        serialized_legacy = mapping.load_lag_map(LEGACY_LAG_ARTIFACT)
+        serialized_vectorized = mapping.load_lag_map(VECTORIZED_LAG_ARTIFACT)
+
+        self.assertEqual(tuple(serialized_legacy), tuple(serialized_vectorized))
+        serialized_legacy_weights = []
+        serialized_vectorized_weights = []
+        for marker_id in self.marker_ids:
+            legacy_rows = serialized_legacy[marker_id]
+            vectorized_rows = serialized_vectorized[marker_id]
+            self.assertEqual(len(legacy_rows), len(vectorized_rows))
+            for legacy_row, vectorized_row in zip(legacy_rows, vectorized_rows):
+                self.assertEqual(
+                    (legacy_row["i"], legacy_row["j"], legacy_row["k"]),
+                    (
+                        vectorized_row["i"],
+                        vectorized_row["j"],
+                        vectorized_row["k"],
+                    ),
+                )
+                self.assertEqual(legacy_row["Vcell"], vectorized_row["Vcell"])
+                self.assertEqual(legacy_row["eps"], vectorized_row["eps"])
+                serialized_legacy_weights.append(legacy_row["w"])
+                serialized_vectorized_weights.append(vectorized_row["w"])
+
+        lag_maximum_error, lag_maximum_normalized_error = self._assert_weights_match(
+            np.asarray(serialized_vectorized_weights).reshape(
+                len(self.marker_ids), -1
+            ),
+            np.asarray(serialized_legacy_weights).reshape(
+                len(self.marker_ids), -1
+            ),
+        )
+        print(
+            "[vectorized-rkpm] .lag maximum absolute weight error: "
+            f"{lag_maximum_error:.17e}; maximum markerwise normalized error: "
+            f"{lag_maximum_normalized_error:.17e}",
+            flush=True,
+        )
+        print(
+            f"[vectorized-rkpm] wrote {LEGACY_LAG_ARTIFACT}",
+            flush=True,
+        )
+        print(
+            f"[vectorized-rkpm] wrote {VECTORIZED_LAG_ARTIFACT}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

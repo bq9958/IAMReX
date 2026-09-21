@@ -25,13 +25,13 @@ model files are unavailable. The MPMD test is skipped if either `mpiexec` or
 implementations for that test.
 
 Most tests use a three-marker synthetic fixture with a nonzero domain origin,
-anisotropic cell spacing and complete 3x3x3 stencils. The full alignment
-regression additionally uses the bundled 2830-marker files under
-`fixtures/real_case/`.
+anisotropic cell spacing and complete 3x3x3 stencils. The full alignment and
+pre-/post-vectorization regressions additionally use the bundled 2830-marker
+files under `fixtures/real_case/`.
 
 ## Test Details
 
-Twelve `test_*.py` files currently define twenty `unittest` test methods.
+Twelve `test_*.py` files currently define nineteen `unittest` test methods.
 
 ### `test_architecture_doc.py`
 
@@ -157,29 +157,33 @@ compile or execute the IAMReX C++ implementation itself.
 
 ### `test_vectorized_rkpm.py`
 
-#### `VectorizedRKPMTests.test_batched_solve_uses_explicit_rhs_column_for_numpy_2`
+#### `VectorizedRKPMTests.test_real_case_moment_matrices_match_legacy_commit_at_machine_precision`
 
-- **What it tests:** Batched RKPM moment solves use a right-hand-side shape that
-  is compatible with both NumPy 1.x and NumPy 2.x.
-- **How it tests it:** It intercepts `np.linalg.solve`, requires an explicit
-  `(N, 10, 1)` column-vector batch, and verifies that `compute_b_I()` removes
-  only the singleton column and returns the expected `(N, 10)` corrections.
+- **What it tests:** The vectorized RKPM moment matrices preserve the numerical
+  result of commit `2cf74f4` at float64 machine-precision scale on the complete
+  2830-marker real case.
+- **How it tests it:** It executes the frozen scalar `window.py` from
+  `fixtures/RKPM_weight_commit_2cf74f4/`, captures the moment matrices assembled
+  inside the current production batch path, and compares their markerwise
+  maximum absolute errors with a tolerance proportional to machine epsilon. A
+  successful run also prints the maximum absolute matrix error.
 
-#### `VectorizedRKPMTests.test_vectorized_batches_match_independent_scalar_equations`
+#### `VectorizedRKPMTests.test_real_case_weights_and_lag_output_match_legacy_commit`
 
-- **What it tests:** The vectorized traditional RKPM implementation preserves
-  the original kernel, quadratic polynomial basis, moment matrix and corrected
-  weight equations.
-- **How it tests it:** The test contains an independent scalar-loop reference
-  implementation, evaluates the same anisotropic three-marker fixture with both
-  paths and compares every weight to near machine precision.
-
-#### `VectorizedRKPMTests.test_solver_chunking_preserves_marker_and_stencil_order`
-
-- **What it tests:** The traditional RKPM result is invariant to the configured
-  marker batch size.
-- **How it tests it:** It compares a single three-marker batch with batches of
-  two markers and requires identical IDs and exactly equal weight arrays.
+- **What it tests:** The current solver preserves the legacy corrected weights
+  and final `.lag` mapping, including marker order, stencil order, `i/j/k`,
+  `Vcell` and `eps`, on the same real case.
+- **How it tests it:** It solves all markers with both the frozen scalar code and
+  the current batched solver, first requiring the moment-matrix comparison to
+  pass. It then regenerates both `.lag` files in a temporary directory and
+  compares their parsed marker order, stencil rows and metadata exactly, with a
+  tight markerwise norm tolerance for weights. Text bytes are not compared
+  because floating-point accumulation and linear-algebra libraries can alter
+  only the final printed digits across implementations and platforms. A
+  successful run prints the maximum absolute `.lag` weight error and maximum
+  markerwise normalized error, and writes both mappings to
+  `artifacts/rkpm_mappings_commit_2cf74f4.lag` and
+  `artifacts/rkpm_mappings_vectorized.lag` for manual inspection.
 
 ### `test_support_generation.py`
 
@@ -248,6 +252,8 @@ independent tests because their names do not start with `test_`:
   solver used only by that test.
 - `verify_rkpm_alignment.py` provides the reproduction-residual calculations
   reused by two tests and can also be run as a standalone full-mapping checker.
+- `fixtures/RKPM_weight_commit_2cf74f4/` is a frozen copy of the scalar RKPM
+  implementation used as the independent pre-vectorization reference.
 
 The full mapping verifier remains directly executable:
 
