@@ -252,6 +252,10 @@ independent tests because their names do not start with `test_`:
   solver used only by that test.
 - `verify_rkpm_alignment.py` provides the reproduction-residual calculations
   reused by two tests and can also be run as a standalone full-mapping checker.
+- `benchmark_time.py` compares the scalar implementation from commit `2cf74f4`
+  with the current vectorized core calculation on the 2830-marker real case. It
+  reports the median runtime over three runs, speedup and maximum weight error;
+  it is a manual benchmark rather than an automatically discovered unit test.
 - `fixtures/RKPM_weight_commit_2cf74f4/` is a frozen copy of the scalar RKPM
   implementation used as the independent pre-vectorization reference.
 
@@ -260,4 +264,11 @@ The full mapping verifier remains directly executable:
 ```bash
 cd /path/to/IAMReX/Tools/RKPM_weight
 python3 unit_test/verify_rkpm_alignment.py
+```
+
+Run the vectorization benchmark separately:
+
+```bash
+cd /path/to/IAMReX/Tools/RKPM_weight
+python3 unit_test/benchmark_time.py
 ```
