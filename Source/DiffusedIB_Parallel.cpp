@@ -1141,7 +1141,7 @@ void mParticle::ForceSpreading(MultiFab & EulerForce,
             particle_kernels[k].ib_force  += {ib_fm[6*k+0], ib_fm[6*k+1], ib_fm[6*k+2]};
             particle_kernels[k].ib_moment += {ib_fm[6*k+3], ib_fm[6*k+4], ib_fm[6*k+5]};
         }
-    } 
+    }
     else
     {
         static bool printed_once = false;
