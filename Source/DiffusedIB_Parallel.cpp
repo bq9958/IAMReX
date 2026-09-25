@@ -625,9 +625,10 @@ void mParticle::UpdateLagrangianMarker() {
                     const auto *const thetaK = ps[id].thetaK;
                     const auto start_id = ps[id].start_id;
 
-                    particles[i].pos(0) = location[0] + radius * std::sin(thetaK[m_id - start_id]) * std::cos(phiK[m_id - start_id]);
-                    particles[i].pos(1) = location[1] + radius * std::sin(thetaK[m_id - start_id]) * std::sin(phiK[m_id - start_id]);
-                    particles[i].pos(2) = location[2] + radius * std::cos(thetaK[m_id - start_id]);
+                    const auto ia = m_id - start_id - 1;
+                    particles[i].pos(0) = location[0] + radius * std::sin(thetaK[ia]) * std::cos(phiK[ia]);
+                    particles[i].pos(1) = location[1] + radius * std::sin(thetaK[ia]) * std::sin(phiK[ia]);
+                    particles[i].pos(2) = location[2] + radius * std::cos(thetaK[ia]);
                 }
                 // RKPM forbi
                 vUP_ptr[i] = 0.0;
