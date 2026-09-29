@@ -17,7 +17,9 @@
 #include "DiffusedIB_Parallel.H"
 #include <AMReX_MPMD.H>
 
+#include <cmath>
 #include <filesystem>
+#include <limits>
 #include <sstream>
 namespace fs = std::filesystem;
 
@@ -41,6 +43,7 @@ namespace ParticleProperties{
     Vector<Real> _radius3;
     Vector<int> _geometry_type;
     Real rd{0.0};
+    Real eps_target{1.0};  // Non-RKPM target ratio of marker volume to h^3.
     Vector<int> TLX{}, TLY{},TLZ{},RLX{},RLY{},RLZ{};
     int euler_finest_level{0};
     int euler_velocity_index{0};
@@ -606,11 +609,22 @@ void mParticle::InitParticles(const Vector<Real>& x,
         mKernel.Vp = Math::pi<Real>() * 4 / 3 * Math::powi<3>(radius[real_index]);
 
         if (ParticleProperties::RKPM == 0) {
+            const Real eps_target = ParticleProperties::eps_target;
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                std::isfinite(eps_target) && eps_target > 0.0,
+                "Non-RKPM eps_target must be finite and positive.");
 
             //int Ml = static_cast<int>( Math::pi<Real>() / 3 * (12 * Math::powi<2>(mKernel.radius / h)));
             //Real dv = Math::pi<Real>() * h / 3 / Ml * (12 * mKernel.radius * mKernel.radius + h * h);
-            const int Ml = static_cast<int>((Math::powi<3>(mKernel.radius - (ParticleProperties::rd - 0.5) * h)
-                   - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*h*h*h/4./Math::pi<Real>()));
+            // const int Ml = static_cast<int>((Math::powi<3>(mKernel.radius - (ParticleProperties::rd - 0.5) * h)
+            //        - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*h*h*h/4./Math::pi<Real>()));
+            const Real marker_count = (Math::powi<3>(mKernel.radius - (ParticleProperties::rd - 0.5) * h)
+                    - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*eps_target*h*h*h/4./Math::pi<Real>());
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                marker_count >= 2.0 && marker_count < static_cast<Real>(std::numeric_limits<int>::max()),
+                "Non-RKPM eps_target produces a marker count outside the supported integer range (Ml >= 2).");
+            const int Ml = static_cast<int>(marker_count);
+
             Real dv = (Math::powi<3>(mKernel.radius - (ParticleProperties::rd - 0.5) * h)
                    - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*Ml/4./Math::pi<Real>());
             mKernel.ml = Ml;
@@ -639,7 +653,8 @@ void mParticle::InitParticles(const Vector<Real>& x,
             if (verbose) Print() << "h: " << h << ", Ml: " << Ml << ", D: " << Math::powi<3>(h) << " gravity : " << gravity << "\n"
                                         << "Kernel : " << index << ": Location (" << x[index] << ", " << y[index] << ", " << z[index]
                                         << "), Velocity : (" << mKernel.velocity[0] << ", " << mKernel.velocity[1] << ", "<< mKernel.velocity[2]
-                                        << "), Radius: " << mKernel.radius << ", Radius2: " << mKernel.radius2 << ", Radius3: " << mKernel.radius3 << ", Ml: " << Ml << ", dv: " << dv << ", Rho: " << mKernel.rho << "\n";
+                                        << "), Radius: " << mKernel.radius << ", Radius2: " << mKernel.radius2 << ", Radius3: " << mKernel.radius3 << ", Ml: " << Ml << ", dv: " << dv << ", Rho: " << mKernel.rho
+                                        << ", eps_target: " << eps_target << ", eps_actual: " << dv / (h*h*h) << "\n";
         }else {
             mKernel.ml = NumOfLagrangianMarker(index);
             mKernel.dv = RKPM_MAP.at(index)[0].eps;
@@ -2140,6 +2155,7 @@ void Particles::Initialize()
         p_file.queryarr("radius3",   ParticleProperties::_radius3);
         p_file.queryarr("geometry_type", ParticleProperties::_geometry_type);
         p_file.query("RD",          ParticleProperties::rd);
+        p_file.query("eps_target",  ParticleProperties::eps_target);
         p_file.query("LOOP_NS",     ParticleProperties::loop_ns);
         p_file.query("LOOP_SOLID",  ParticleProperties::loop_solid);
         p_file.query("verbose",     ParticleProperties::verbose);
