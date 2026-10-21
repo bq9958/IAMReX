@@ -17,6 +17,7 @@
 #include "DiffusedIB_Parallel.H"
 #include <AMReX_MPMD.H>
 
+#include <cmath>
 #include <filesystem>
 #include <sstream>
 namespace fs = std::filesystem;
@@ -40,6 +41,7 @@ namespace ParticleProperties{
     Vector<Real> _radius2;
     Vector<Real> _radius3;
     Vector<int> _geometry_type;
+    Vector<Real> _orientation;
     Real rd{0.0};
     Vector<int> TLX{}, TLY{},TLZ{},RLX{},RLY{},RLZ{};
     int euler_finest_level{0};
@@ -78,22 +80,32 @@ Real nodal_phi_to_heavi(Real phi)
     return 1.0;
 }
 
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+RealVect worldToBodyOffset(const GpuArray<Real, 4>& q, const RealVect& world_offset) noexcept {
+    RealVect q_v_inv = {-q[1], -q[2], -q[3]};
+    RealVect t = 2*q_v_inv.crossProduct(world_offset);
+    RealVect result = world_offset + q[0]*t + q_v_inv.crossProduct(t);
+    return result;
+};
+
 // Nodal level-set value of one particle at node (Xn,Yn,Zn). Same formulas as
 // calculate_phi_nodal(): sphere -> signed distance normalised by the radius,
 // ellipsoid -> first-order approximation left unnormalised, anything else -> 0.
 AMREX_INLINE AMREX_GPU_DEVICE
 Real nodal_phi_at (Real Xn, Real Yn, Real Zn,
                    Real Xp, Real Yp, Real Zp,
-                   Real a, Real b, Real c, int geometry_type) noexcept
+                   Real a, Real b, Real c, int geometry_type, const GpuArray<Real, 4>& q) noexcept
 {
     if (geometry_type == 1) {
         Real phi = std::sqrt( (Xn - Xp)*(Xn - Xp)
                             + (Yn - Yp)*(Yn - Yp) + (Zn - Zp)*(Zn - Zp)) - a;
         return phi / a;
     } else if (geometry_type == 2) {
-        Real xp = Xn - Xp;
-        Real yp = Yn - Yp;
-        Real zp = Zn - Zp;
+        RealVect world_offset{Xn-Xp, Yn-Yp, Zn-Zp};
+        RealVect body_offset = worldToBodyOffset(q, world_offset);
+        Real xp = body_offset[0];
+        Real yp = body_offset[1];
+        Real zp = body_offset[2];
         Real xp2 = xp * xp;
         Real yp2 = yp * yp;
         Real zp2 = zp * zp;
@@ -108,7 +120,8 @@ Real nodal_phi_at (Real Xn, Real Yn, Real Zn,
         Real b4 = b2 * b2;
         Real c4 = c2 * c2;
         Real denominator = 2.0 * std::sqrt(xp4 / a4 + yp4 / b4 + zp4 / c4);
-        return numerator / (denominator + 1.e-12);
+        const Real denom_floor = Real(1.e-6) * amrex::min(a, amrex::min(b, c));  // to be consistent with calculate_phi_nodal
+        return numerator / amrex::max(denominator, denom_floor);
     }
     return 0.0;
 }
@@ -120,7 +133,7 @@ AMREX_INLINE AMREX_GPU_DEVICE
 Real cell_pvf_at (int i, int j, int k,
                   GpuArray<Real,3> const& dx, GpuArray<Real,3> const& plo,
                   Real Xp, Real Yp, Real Zp,
-                  Real a, Real b, Real c, int geometry_type) noexcept
+                  Real a, Real b, Real c, int geometry_type, const GpuArray<Real, 4>& q) noexcept
 {
     Real num = 0.0;
     Real deo = 0.0;
@@ -128,7 +141,7 @@ Real cell_pvf_at (int i, int j, int k,
         for (int jj = j; jj <= j+1; ++jj) {
             for (int ii = i; ii <= i+1; ++ii) {
                 const Real ph = nodal_phi_at(ii * dx[0] + plo[0], jj * dx[1] + plo[1], kk * dx[2] + plo[2],
-                                             Xp, Yp, Zp, a, b, c, geometry_type);
+                                             Xp, Yp, Zp, a, b, c, geometry_type, q);
                 num += (-ph) * nodal_phi_to_heavi(-ph);
                 deo += std::abs(ph);
             }
@@ -202,6 +215,8 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
     BL_PROFILE("DiffusedIB::calculate_phi_nodal");
     phi_nodal.setVal(0.0);
 
+    const auto q = current_kernel.orientation;
+
     Real Xp = current_kernel.location[0];
     Real Yp = current_kernel.location[1];
     Real Zp = current_kernel.location[2];
@@ -248,9 +263,12 @@ void calculate_phi_nodal(MultiFab& phi_nodal, kernel& current_kernel)
                     Real Zn = k * dx[2] + plo[2];
 
                     // Relative coordinates to ellipsoid center
-                    Real xp = Xn - Xp;
-                    Real yp = Yn - Yp;
-                    Real zp = Zn - Zp;
+                    RealVect world_offset = {Xn-Xp, Yn-Yp, Zn-Zp};
+                    RealVect body_offset = worldToBodyOffset(q, world_offset);
+                    Real xp = body_offset[0];
+                    Real yp = body_offset[1];
+                    Real zp = body_offset[2];
+
 
                     // Compute ellipsoid level set function using the formula:
                     // d ≈ (x'^2/a^2 + y'^2/b^2 + z'^2/c^2 - 1) / (2 * sqrt(x'^4/a^4 + y'^4/b^4 + z'^4/c^4))
@@ -539,6 +557,7 @@ void mParticle::InitParticles(const Vector<Real>& x,
                               const Vector<Real>& radius2,
                               const Vector<Real>& radius3,
                               const Vector<int>& geometry_type,
+                              const Vector<Real>& orientation,
                               Real h,
                               Real gravity,
                               int _verbose)
@@ -582,11 +601,14 @@ void mParticle::InitParticles(const Vector<Real>& x,
         mKernel.omega[0] = Ox[real_index];
         mKernel.omega[1] = Oy[real_index];
         mKernel.omega[2] = Oz[real_index];
-
+        for (int d=0; d<=3; d++) {
+                    mKernel.orientation[d] = orientation[d];
+        }
         // use current state to initialize old state
         mKernel.location_old = mKernel.location;
         mKernel.velocity_old = mKernel.velocity;
         mKernel.omega_old = mKernel.omega;
+        mKernel.orientation_old = mKernel.orientation;
 
         mKernel.TL[0] = TLXt[real_index];
         mKernel.TL[1] = TLYt[real_index];
@@ -666,9 +688,12 @@ void mParticle::InitParticles(const Vector<Real>& x,
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(LargrangianMarker.size() == particle_kernels[0].ml, "inconsistent marker number");
         RealVect center = particle_kernels[0].location;
         rkpm_reference_offsets.resize(LargrangianMarker.size());
+        GpuArray<Real, 4> q = particle_kernels[0].orientation;
         for (int i=0; i<LargrangianMarker.size(); i++) {
             RealVect marker_position = LargrangianMarker[i];
-            rkpm_reference_offsets[i] = {marker_position[0] - center[0], marker_position[1] - center[1], marker_position[2] - center[2]};
+            RealVect world_offset = marker_position - center;
+            RealVect body_offset = worldToBodyOffset(q, world_offset);
+            rkpm_reference_offsets[i] = {body_offset[0], body_offset[1], body_offset[2]};
         }
     }
     //collision box generate
@@ -681,12 +706,71 @@ void mParticle::UpdateRKPMMarkerPositions()
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(particle_kernels.size() == 1, "RKPM translation currently supports exactly one particle.");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(LargrangianMarker.size() == rkpm_reference_offsets.size(), "Marker position vector length should be equal to offset vector");
     RealVect center = particle_kernels[0].location;
+    const auto q = particle_kernels[0].orientation;
     for (int i=0; i<LargrangianMarker.size(); i++)
     {
-        LargrangianMarker[i] = {center[0]+rkpm_reference_offsets[i][0], center[1]+rkpm_reference_offsets[i][1], center[2]+rkpm_reference_offsets[i][2]};
+        RealVect rotated_offset = afterRotation(q, rkpm_reference_offsets[i]);
+        LargrangianMarker[i] = center + rotated_offset;
     }
     d_rkpm_marker_positions.resize(LargrangianMarker.size());
     Gpu::copy(Gpu::hostToDevice, LargrangianMarker.begin(), LargrangianMarker.end(), d_rkpm_marker_positions.begin());
+}
+
+RealVect mParticle::afterRotation(const GpuArray<Real, 4> q, const RealVect offset)
+{
+    const RealVect qv = {q[1], q[2], q[3]};
+    RealVect t = 2.0 * qv.crossProduct(offset);
+    RealVect result = offset + q[0] * t + qv.crossProduct(t);
+    return result;
+}
+
+GpuArray<Real, 4> mParticle::advanceOrientation(const GpuArray<Real, 4>& q_old, const RealVect& omega_world, Real dt)
+{
+    Real Omega = std::sqrt(omega_world[0]*omega_world[0] + omega_world[1]*omega_world[1] + omega_world[2]*omega_world[2]);
+    Real alpha = Omega*dt / 2;
+    Real s;
+    if (Omega == 0.0) {
+        s = dt / 2.0;
+    } else {
+        s = std::sin(alpha) / Omega;
+    }
+    GpuArray<Real, 4> delta_q{};
+    delta_q[0] = static_cast<Real>(std::cos(alpha));
+    delta_q[1] = static_cast<Real>(s * omega_world[0]);
+    delta_q[2] = static_cast<Real>(s * omega_world[1]);
+    delta_q[3] = static_cast<Real>(s * omega_world[2]);
+
+    GpuArray<Real, 4> q_new{};
+    q_new[0] = delta_q[0] * q_old[0]
+         - delta_q[1] * q_old[1]
+         - delta_q[2] * q_old[2]
+         - delta_q[3] * q_old[3];
+
+    q_new[1] = delta_q[0] * q_old[1]
+            + delta_q[1] * q_old[0]
+            + delta_q[2] * q_old[3]
+            - delta_q[3] * q_old[2];
+
+    q_new[2] = delta_q[0] * q_old[2]
+            - delta_q[1] * q_old[3]
+            + delta_q[2] * q_old[0]
+            + delta_q[3] * q_old[1];
+
+    q_new[3] = delta_q[0] * q_old[3]
+            + delta_q[1] * q_old[2]
+            - delta_q[2] * q_old[1]
+            + delta_q[3] * q_old[0];
+
+    Real n = std::sqrt(q_new[0]*q_new[0] + q_new[1]*q_new[1] + q_new[2]*q_new[2] + q_new[3]*q_new[3]);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::isfinite(n) && n > 0.0,
+        "advanceOrientation: quaternion norm must be finite and positive.");
+    q_new[0] = q_new[0] / n;
+    q_new[1] = q_new[1] / n;
+    q_new[2] = q_new[2] / n;
+    q_new[3] = q_new[3] / n;
+
+    return q_new;
 }
 
 void mParticle::syncKernelsToDevice ()
@@ -784,17 +868,30 @@ void mParticle::UpdateLagrangianMarker() {
 }
 
 // True (and remembers the current centres) if any particle centre differs from
-// the centres at the previous redistribute, or if there has been none yet.
+// the centres at the previous redistribute, or if markers' position change during rotation.
 bool mParticle::MarkersNeedRedistribute()
 {
     const int nk = static_cast<int>(particle_kernels.size());
-    bool moved = (static_cast<int>(m_redistributed_loc.size()) != nk);
+    bool moved = (static_cast<int>(m_redistributed_loc.size()) != nk ||
+                  static_cast<int>(m_redistributed_orientation.size()) != nk);
     for (int k = 0; !moved && k < nk; ++k) {
-        moved = (particle_kernels[k].location != m_redistributed_loc[k]);
+        moved = (particle_kernels[k].location != m_redistributed_loc[k]) || 
+                (do_RKPM && (particle_kernels[k].orientation[0] != m_redistributed_orientation[k][0] || 
+                 particle_kernels[k].orientation[1] != m_redistributed_orientation[k][1] ||
+                 particle_kernels[k].orientation[2] != m_redistributed_orientation[k][2] ||
+                 particle_kernels[k].orientation[3] != m_redistributed_orientation[k][3]));
+        if (moved) break;
     }
     if (moved) {
         m_redistributed_loc.resize(nk);
+        m_redistributed_orientation.resize(nk);
         for (int k = 0; k < nk; ++k) m_redistributed_loc[k] = particle_kernels[k].location;
+        for (int k = 0; k < nk; ++k) {
+            m_redistributed_orientation[k][0] = particle_kernels[k].orientation[0];
+            m_redistributed_orientation[k][1] = particle_kernels[k].orientation[1];
+            m_redistributed_orientation[k][2] = particle_kernels[k].orientation[2];
+            m_redistributed_orientation[k][3] = particle_kernels[k].orientation[3];
+        }
     }
     return moved;
 }
@@ -1309,6 +1406,8 @@ void mParticle::UpdateParticlesReference(int iStep,
             ParallelDescriptor::Bcast(&kernel.velocity_old[0],3,ParallelDescriptor::IOProcessorNumber());
             ParallelDescriptor::Bcast(&kernel.omega[0],3,ParallelDescriptor::IOProcessorNumber());
             ParallelDescriptor::Bcast(&kernel.omega_old[0],3,ParallelDescriptor::IOProcessorNumber());
+            ParallelDescriptor::Bcast(kernel.orientation.data(), 4, ParallelDescriptor::IOProcessorNumber());
+            ParallelDescriptor::Bcast(kernel.orientation_old.data(), 4, ParallelDescriptor::IOProcessorNumber());
 
             loop--;
 
@@ -1385,6 +1484,7 @@ void mParticle::SixDOFUpdate(kernel& kernel, Real dt)
             Abort("Stop here!");
         }
     }
+    kernel.orientation = advanceOrientation(kernel.orientation_old, kernel.omega, dt);
 }
 
 // Broadcast location/velocity/omega (+ their *_old) of all particles from the
@@ -1392,7 +1492,7 @@ void mParticle::SixDOFUpdate(kernel& kernel, Real dt)
 void mParticle::BroadcastKernelState()
 {
     const int nk = static_cast<int>(particle_kernels.size());
-    constexpr int NV = 18;
+    constexpr int NV = 26;
     Vector<Real> buf(NV * nk);
     if (ParallelDescriptor::MyProc() == ParallelDescriptor::IOProcessorNumber()) {
         for (int k = 0; k < nk; ++k) {
@@ -1405,6 +1505,10 @@ void mParticle::BroadcastKernelState()
                 b[9 + d]  = p.velocity_old[d];
                 b[12 + d] = p.omega[d];
                 b[15 + d] = p.omega_old[d];
+            }
+            for (int d = 0; d<=3; ++d) {
+                b[18 + d] = p.orientation[d];
+                b[22 + d] = p.orientation_old[d];
             }
         }
     }
@@ -1419,6 +1523,10 @@ void mParticle::BroadcastKernelState()
             p.velocity_old[d] = b[9 + d];
             p.omega[d]        = b[12 + d];
             p.omega_old[d]    = b[15 + d];
+        }
+        for (int d=0; d<=3; ++d) {
+            p.orientation[d] = b[18 + d];
+            p.orientation_old[d] = b[22 + d];
         }
     }
 }
@@ -1486,9 +1594,12 @@ void mParticle::UpdateParticlesFused(int iStep,
     // loc_pvf tracks where the most recent pvf was evaluated; the final
     // accumulation into pvf uses it (see the reference path).
     Vector<RealVect> loc_entry(nk), loc_pvf(nk);
+    Vector<GpuArray<Real, 4>> q_entry(nk), q_pvf(nk);
     for (int k = 0; k < nk; ++k) {
         loc_entry[k] = particle_kernels[k].location;
         loc_pvf[k]   = particle_kernels[k].location;
+        q_entry[k] = particle_kernels[k].orientation;
+        q_pvf[k] = particle_kernels[k].orientation;
     }
 
     // 12 partial sums per particle: sum_u_new, sum_u_old, sum_t_new, sum_t_old
@@ -1505,17 +1616,26 @@ void mParticle::UpdateParticlesFused(int iStep,
         BL_PROFILE_VAR("UpdateParticles::pvf_sums_local", blp_local);
         ParallelFor(NS * nk, [=] AMREX_GPU_DEVICE (int i) noexcept { d_sums_ptr[i] = 0.0; });
 
-        for (int kidx = 0; kidx < nk; ++kidx) loc_pvf[kidx] = particle_kernels[kidx].location;
+        for (int kidx = 0; kidx < nk; ++kidx) 
+        {
+            loc_pvf[kidx] = particle_kernels[kidx].location;
+            q_pvf[kidx] = particle_kernels[kidx].orientation;
+        }
         // (particle, local grid, intersection box) triples of this rank only:
         // no MFIter per particle, and nothing at all for particles that live
         // on other ranks, so the host cost is ~ local particles, not N_total.
         auto const& work = PvfWorkList(Euler.boxArray(), Euler.DistributionMap(), loc_pvf, loc_entry);
         for (auto const& w : work) {
             const int kidx = w.kidx;
+            const auto q_c = q_pvf[kidx];
+            const auto q_e = q_entry[kidx];
             auto const& kern = particle_kernels[kidx];
             const RealVect loc_c = kern.location;   // current pvf and torque arm
             const RealVect loc_e = loc_entry[kidx]; // "old" pvf
-            const bool same_loc = (loc_c == loc_e);
+            const bool same_pose = (loc_c == loc_e) && (q_e[0] == q_c[0]
+                                                    && q_e[1] == q_c[1]
+                                                    && q_e[2] == q_c[2]
+                                                    && q_e[3] == q_c[3]);
             const Real a = kern.radius;
             const Real b = kern.radius2;
             const Real c = kern.radius3;
@@ -1527,9 +1647,9 @@ void mParticle::UpdateParticlesFused(int iStep,
                 auto const& Eo = Euler_old.const_array(w.grid);
                 ParallelFor(ibx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    const Real pvf_c = cell_pvf_at(i, j, k, dx, plo, loc_c[0], loc_c[1], loc_c[2], a, b, c, gtype);
-                    const Real pvf_e = same_loc ? pvf_c
-                                     : cell_pvf_at(i, j, k, dx, plo, loc_e[0], loc_e[1], loc_e[2], a, b, c, gtype);
+                    const Real pvf_c = cell_pvf_at(i, j, k, dx, plo, loc_c[0], loc_c[1], loc_c[2], a, b, c, gtype, q_c);
+                    const Real pvf_e = same_pose ? pvf_c
+                                     : cell_pvf_at(i, j, k, dx, plo, loc_e[0], loc_e[1], loc_e[2], a, b, c, gtype, q_e);
                     if (pvf_c == 0.0 && pvf_e == 0.0) return;
 
                     // same expressions as CalculateSumU_cir / CalculateSumT_cir
@@ -1589,6 +1709,7 @@ void mParticle::UpdateParticlesFused(int iStep,
     for (auto const& w : work_acc) {
         auto const& kern = particle_kernels[w.kidx];
         const RealVect loc = loc_pvf[w.kidx];
+        const auto q = q_pvf[w.kidx];
         const Real a = kern.radius;
         const Real b = kern.radius2;
         const Real c = kern.radius3;
@@ -1596,7 +1717,7 @@ void mParticle::UpdateParticlesFused(int iStep,
         auto const& pv = pvf.array(w.grid);
         ParallelFor(w.ibx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
         {
-            pv(i,j,k) += cell_pvf_at(i, j, k, dx, plo, loc[0], loc[1], loc[2], a, b, c, gtype);
+            pv(i,j,k) += cell_pvf_at(i, j, k, dx, plo, loc[0], loc[1], loc[2], a, b, c, gtype, q);
         });
     }
     BL_PROFILE_VAR_STOP(blp_acc);
@@ -1698,6 +1819,7 @@ void mParticle::RecordOldValue(kernel& kernel)
     kernel.location_old = kernel.location;
     kernel.velocity_old = kernel.velocity;
     kernel.omega_old = kernel.omega;
+    kernel.orientation_old = kernel.orientation;
 }
 
 void mParticle::ResolveLagrangianMarker(std::string marker_file) {
@@ -1922,6 +2044,8 @@ void Particles::create_particles(const Geometry &gm,
     if(particle->mContainer != nullptr){
         delete particle->mContainer;
         particle->mContainer = nullptr;
+        particle->m_redistributed_loc.clear();
+        particle->m_redistributed_orientation.clear();
     }
     particle->mContainer = new mParticleContainer(gm, dm, ba);
 
@@ -2049,6 +2173,7 @@ void Particles::init_particle(Real gravity, Real h)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
+            ParticleProperties::_orientation,
             h,
             gravity,
             ParticleProperties::verbose);
@@ -2084,6 +2209,7 @@ void Particles::Restart(Real gravity, Real h, int iStep)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
+            ParticleProperties::_orientation,
             h,
             gravity,
             ParticleProperties::verbose);
@@ -2184,6 +2310,19 @@ void Particles::Initialize()
         p_file.queryarr("radius2",   ParticleProperties::_radius2);
         p_file.queryarr("radius3",   ParticleProperties::_radius3);
         p_file.queryarr("geometry_type", ParticleProperties::_geometry_type);
+        auto& input_orientation = ParticleProperties::_orientation;
+        if (!p_file.queryarr("orientation", input_orientation)) {
+            input_orientation = {Real(1), Real(0), Real(0), Real(0)};
+        } else {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(input_orientation.size() == 4, "orientation must contain exactly 4 components in (w, x, y, z) order.");
+            const Real norm = std::hypot(
+                std::hypot(input_orientation[0], input_orientation[1]),
+                std::hypot(input_orientation[2], input_orientation[3]));
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(norm > Real(0), "orientation norm must be positive.");
+            for (Real& component : input_orientation) {
+                component /= norm;
+            }
+        }
         p_file.query("RD",          ParticleProperties::rd);
         p_file.query("LOOP_NS",     ParticleProperties::loop_ns);
         p_file.query("LOOP_SOLID",  ParticleProperties::loop_solid);

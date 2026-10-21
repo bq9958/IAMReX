@@ -98,6 +98,10 @@ struct kernel{
     RealVect location_old{0.0,0.0,0.0};
     RealVect omega_old{0.0,0.0,0.0};
 
+    // convert vector of body frame into world frame
+    GpuArray<Real, 4> orientation{1,0,0,0};
+    GpuArray<Real, 4> orientation_old{1,0,0,0};
+
     RealVect varphi{0.0,0.0,0.0};
     Real radius{0.0};
     Real radius2{0.0};
@@ -227,6 +231,7 @@ public:
                        const Vector<Real>& radius2,
                        const Vector<Real>& radius3,
                        const Vector<int>& geometry_type,
+                       const Vector<Real>& orientation,
                        Real h,
                        Real gravity,
                        int verbose = 0);
@@ -380,6 +385,9 @@ public:
     */
     void UpdateRKPMMarkerPositions();
 
+    RealVect afterRotation(const GpuArray<Real, 4> q, const RealVect offset);
+    GpuArray<Real, 4> advanceOrientation(const GpuArray<Real, 4>& q_old, const RealVect& omega_world, Real dt);
+
     Vector<kernel> particle_kernels;
 
     /// GPU-accessible copy of kernel data for use in device lambdas.
@@ -387,6 +395,7 @@ public:
 
     /// Particle centres at the time of the last marker Redistribute (see MarkersNeedRedistribute).
     Vector<RealVect> m_redistributed_loc;
+    Vector<GpuArray<Real, 4>> m_redistributed_orientation;
 
     /// One unit of pvf work: particle kidx on this rank's grid `grid`, cells `ibx`.
     struct PvfWork { int kidx; int grid; Box ibx; };
