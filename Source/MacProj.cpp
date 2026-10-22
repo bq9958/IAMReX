@@ -1143,6 +1143,22 @@ MacProj::mlmg_mac_solve (Amr* a_parent, const MultiFab* cphi, const BCRec& a_phy
     info.setMaxCoarseningLevel(max_coarsening_level);
     info.setAgglomeration(agglomeration);
     info.setConsolidation(consolidation);
+    // Semicoarsening (AMReX LPInfo option, not exposed by AMReX-Hydro).  Needed
+    // on anisotropic grids with two fine directions (dx:dy:dz = 1:1:2 etc.),
+    // where the plain V-cycle of this Poisson solve diverges; see
+    // run/flow_past_ellipsoid_re90_aniso/debug_vsync (2026-10-17).  Direction =
+    // the coarse one; levels = log2(coarse/fine), e.g. 1:1:2 -> direction 2, 1 level.
+    {
+        int sc = 0, sc_dir = -1, sc_lev = 0;
+        pp.query("semicoarsening", sc);
+        pp.query("semicoarsening_direction", sc_dir);
+        pp.query("max_semicoarsening_level", sc_lev);
+        if (sc) {
+            info.setSemicoarsening(true);
+            info.setSemicoarseningDirection(sc_dir);
+            info.setMaxSemicoarseningLevel(sc_lev);
+        }
+    }
 
     //
     // To use phi on CellCentroids, must also call
