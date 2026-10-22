@@ -1079,6 +1079,20 @@ Diffusion::diffuse_tensor_Vsync (MultiFab&              Vsync,
     info.setAgglomeration(agglomeration);
     info.setConsolidation(consolidation);
     //info.setMaxCoarseningLevel(100);
+    // Semicoarsening for anisotropic grids; same keys as mac_proj.* under the
+    // "diffuse" prefix (see MacProj::mlmg_mac_solve).
+    {
+        ParmParse ppsc("diffuse");
+        int sc = 0, sc_dir = -1, sc_lev = 0;
+        ppsc.query("semicoarsening", sc);
+        ppsc.query("semicoarsening_direction", sc_dir);
+        ppsc.query("max_semicoarsening_level", sc_lev);
+        if (sc) {
+            info.setSemicoarsening(true);
+            info.setSemicoarseningDirection(sc_dir);
+            info.setMaxSemicoarseningLevel(sc_lev);
+        }
+    }
 
 #ifdef AMREX_USE_EB
     const auto& ebf = &dynamic_cast<EBFArrayBoxFactory const&>(navier_stokes->Factory());
