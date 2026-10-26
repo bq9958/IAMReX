@@ -294,7 +294,9 @@ void CalculateSumU_cir (RealVect& sum,
 {
     auto const& E_data = E.const_arrays();
     auto const& pvf_data = pvf.const_arrays();
-    const Real d = Math::powi<3>(ParticleProperties::dx[0]);
+    // cell volume dx*dy*dz, not dx^3: the grid may be anisotropic (e.g. 1:2:2)
+    const auto& dx = ParticleProperties::dx;
+    const Real d = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
     GpuTuple<Real, Real, Real> tmpSum = ParReduce(TypeList<ReduceOpSum,ReduceOpSum,ReduceOpSum>{}, TypeList<Real, Real, Real>{},E, IntVect{0},
     [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept -> GpuTuple<Real, Real, Real>{
         auto E_ = E_data[box_no];
@@ -321,7 +323,7 @@ void CalculateSumT_cir (RealVect& sum,
 
     auto const& E_data = E.const_arrays();
     auto const& pvf_data = pvf.const_arrays();
-    const Real d = Math::powi<3>(ParticleProperties::dx[0]);
+    const Real d = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);   // cell volume, grid may be anisotropic
     GpuTuple<Real, Real, Real> tmpSum = ParReduce(TypeList<ReduceOpSum,ReduceOpSum,ReduceOpSum>{}, TypeList<Real, Real, Real>{},E, IntVect{0},
     [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept -> GpuTuple<Real, Real, Real>{
         auto E_ = E_data[box_no];
@@ -1426,7 +1428,7 @@ void mParticle::UpdateParticlesFused(int iStep,
     const int nk = static_cast<int>(particle_kernels.size());
     const auto dx  = ParticleProperties::dx;
     const auto plo = ParticleProperties::plo;
-    const Real dvol = Math::powi<3>(dx[0]);
+    const Real dvol = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);   // cell volume, grid may be anisotropic
     const int vidx = ParticleProperties::euler_velocity_index;
 
     for (auto const& kern : particle_kernels) {
@@ -1965,6 +1967,13 @@ void Particles::create_particles(const Geometry &gm,
     BL_PROFILE_VAR("create_particles::Redistribute", blp_redist);
     particle->mContainer->Redistribute(); // Still needs to redistribute here!
     BL_PROFILE_VAR_STOP(blp_redist);
+    // A new container (initial grids, every regrid) holds the non-RKPM markers
+    // at the particle centre until the next UpdateLagrangianMarker() moves them
+    // to the surface. That call only redistributes when a centre has moved, so
+    // forget the centres it remembered: otherwise, after a regrid, markers sit
+    // in the box of the centre while their stencil writes go elsewhere (heap
+    // corruption, segfault at the step after the regrid on max_level > 0).
+    particle->m_redistributed_loc.clear();
 
     ParticleProperties::plo = gm.ProbLoArray();
     ParticleProperties::phi = gm.ProbHiArray();
