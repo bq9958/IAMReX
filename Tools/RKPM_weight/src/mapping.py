@@ -127,6 +127,20 @@ def replace_mapping_weights(
     return result
 
 
+def replace_mapping_eps(lag_to_eul_map, epsilon):
+    """Copy a mapping and set one positive volume ratio per marker."""
+    if set(lag_to_eul_map) != set(epsilon):
+        raise ValueError("Epsilon-result IDs do not match the lag mapping IDs")
+    result = deepcopy(lag_to_eul_map)
+    for marker_id, rows in result.items():
+        value = float(epsilon[marker_id])
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(f"Marker {marker_id} eps must be finite and positive")
+        for row in rows:
+            row["eps"] = value
+    return result
+
+
 def build_lag_to_eul_map(
     lagrangian_points: np.ndarray,
     all_S_I: List[np.ndarray],

@@ -36,6 +36,7 @@ flowchart TB
         SupportGeneration["SI_generated.py<br/>vectorized 3x3x3 support generation"]
         Mapping["mapping.py<br/>load, build, replace and serialize mappings"]
         Diagnostics["error.py and visual.py<br/>conservation checks and optional plots"]
+        Epsilon["epsilon.py (optional, SciPy)<br/>matrix-free A eps = 1 and forcing spectrum"]
         MappingOutput["Generated .id and .lag files"]
     end
 
@@ -54,7 +55,7 @@ flowchart TB
     end
 
     subgraph Verification[Regression protection]
-        UnitTests["unit_test/<br/>20 unit and integration tests"]
+        UnitTests["unit_test/<br/>unit and integration test suite"]
         RealFixture["2830-marker real-case fixture"]
         MPIEmulator["Python MPI client<br/>emulates the C++ root rank"]
     end
@@ -86,6 +87,8 @@ flowchart TB
     GridIndex -.-> Transport
 
     WeightArray --> Mapping --> Diagnostics --> MappingOutput
+    Mapping -- "file mode, solve-epsilon" --> Epsilon
+    Epsilon -- "per-marker eps and JSON diagnostics" --> MappingOutput
 
     IAMReX -- "marker count and float64 positions" --> Transport
     MappingFiles -- "fixed 27-cell stencil" --> Transport
@@ -155,6 +158,7 @@ flowchart LR
 | `src/mapping.py` | Read, validate, build, update and write `.id/.lag` mappings. |
 | `src/weight_solver.py` | Pack static stencils, cache reusable arrays, batch markers and expose RKPM/ML solver backends. |
 | `src/window.py` | Evaluate the RKPM kernel, polynomial basis, moment matrices and corrected weights with NumPy. |
+| `src/epsilon.py` | Pack sparse interpolation J, solve `(J J^T) eps = 1` with preconditioned CG, validate positive volumes and optionally diagnose the fixed-position forcing spectrum. |
 | `src/mpmd_transport.py` | Implement the single-rank Python MPI server and its wire protocol with IAMReX. |
 | `src/validation.py` | Compute zeroth- and first-moment residuals on the exact weight array sent to C++. |
 | `src/error.py` | Compute vectorized volume, force and torque conservation diagnostics for file mode. |
@@ -169,6 +173,9 @@ flowchart LR
 | Point-cloud frame | Explicit body or world frame | Body-frame coordinates are translated by `particle_inputs.{x,y,z}`; world-frame coordinates are used unchanged. |
 | Stencil indices | `(N, 27, 3)`, integer | Loaded from `.lag`, packed once and cached for the solver lifetime. |
 | RKPM metadata | `eps` per stencil row | Loaded from `.lag`; traditional RKPM recovers each marker's Lagrangian volume from it. |
+| Volume mode | `prescribed` (default) or `solve-epsilon` | File-mode RKPM can replace prescribed volumes with a coupled solve after computing local windows from unit-eps seeds. ML and MPMD reject volume updates. |
+| Solved volumes | `(N,)` float64 `eps` and `V_lag` | `V_lag = eps * prod(dx)`; positive solved eps is copied to all stencil rows of its marker. Conservation diagnostics accept scalar or per-marker physical volumes. |
+| Epsilon report | `<output-prefix>.epsilon.json` | File mode records CG residuals, iterations and marker volumes; converged nonpositive results are retained with `accepted=false` and no mapping. Optional `--epsilon-spectrum` adds eigenvalue bounds and the forcing spectral radius for positive solutions. |
 | Solver weights | `(N, 27)`, floating point | Produced in marker-ID and `.lag` row order by either backend. |
 | MPMD positions | flat `N*3`, `MPI_DOUBLE` | Sent from the C++ root rank to the Python server. |
 | MPMD weights | flat `N*27`, `MPI_FLOAT` | Sent from the Python server to the C++ root rank. |
@@ -177,6 +184,16 @@ The current MPMD protocol transfers new weights but not new stencil indices.
 Consequently, marker motion is valid only while every marker remains inside the
 center cell of its cached 3x3x3 stencil. `validate_fixed_stencils()` aborts or
 reports the mismatch before stale indices can be used.
+
+`--volume-mode solve-epsilon` uses the actual interpolation multiplier
+`J[I,j] = w[I,j] * Vcell[I,j]`. Its dimensionless A is `J J^T`; the legacy
+RKPM-3d physical operator is `A / prod(dx)`. Only sparse J is assembled, with
+one column per unique global integer Euler cell. Matrix-vector products apply
+spreading then interpolation. The solver rejects failed residual checks and
+nonpositive volumes before writing a mapping. With positive eps, the optional
+spectrum of `sqrt(D) A sqrt(D)` diagnoses only the fixed-position forcing
+iteration `I-A D`, not full CFD stability. See README for singular-system,
+positivity, coverage and spectral limitations.
 
 ## Architecture Maintenance Checklist
 

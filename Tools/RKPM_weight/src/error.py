@@ -13,6 +13,13 @@ def test_function(x, y):
     return np.sin(np.pi * x) * np.cos(np.pi * y)
 
 
+def _marker_volumes(V_lag, count):
+    volumes = np.broadcast_to(np.asarray(V_lag, dtype=float), (count,))
+    if not np.all(np.isfinite(volumes)) or np.any(volumes <= 0.0):
+        raise ValueError("V_lag must contain finite positive marker volumes")
+    return volumes
+
+
 def compute_infinity_norm_error(original_values, interpolated_values):
     """Return the infinity-norm error between two value arrays."""
     return np.max(np.abs(original_values - interpolated_values))
@@ -63,8 +70,7 @@ def compute_error_volume(lagrangian_points, all_S_I, all_modified_w, V_lag):
     weight_sums = np.zeros(len(all_S_I))
     np.add.at(weight_sums, marker_indices, weights)
     relative_error = np.abs(weight_sums - 1.0)
-    if not np.isfinite(V_lag) or V_lag <= 0.0:
-        raise ValueError("V_lag must be finite and positive")
+    _marker_volumes(V_lag, len(all_S_I))
     print(
         "Relative volume error: "
         f"Min: {np.min(relative_error):.6e}, Max: {np.max(relative_error):.6e}"
@@ -81,6 +87,7 @@ def compute_error(
 ):
     """Evaluate constant-field interpolation error and force conservation."""
     original_values = np.ones(len(lagrangian_points))
+    volumes = _marker_volumes(V_lag, len(lagrangian_points))
     supports, weights, marker_indices, _ = _flatten_supports(
         all_S_I, all_modified_w
     )
@@ -93,7 +100,7 @@ def compute_error(
     contributions = (
         original_values[marker_indices[valid]]
         * weights[valid]
-        * V_lag
+        * volumes[marker_indices[valid]]
         / supports[valid, 3]
     )
     np.add.at(dispersion_values, euler_indices[valid], contributions)
@@ -105,7 +112,7 @@ def compute_error(
         dispersion_values[euler_indices[valid]] * weights[valid],
     )
 
-    force_lagrangian = np.sum(original_values * V_lag)
+    force_lagrangian = np.sum(original_values * volumes)
     grid_volumes = np.zeros(len(eulerian_points))
     grid_volumes[euler_indices[valid]] = supports[valid, 3]
     force_euler = np.sum(dispersion_values * grid_volumes)
@@ -129,6 +136,7 @@ def compute_conservation_check(
     """Check force and moment/torque conservation simultaneously."""
     center = np.asarray(center, dtype=float)
     lagrangian_points = np.asarray(lagrangian_points, dtype=float)
+    volumes = _marker_volumes(V_lag, len(lagrangian_points))
     supports, weights, marker_indices, _ = _flatten_supports(
         all_S_I, all_modified_w
     )
@@ -142,9 +150,9 @@ def compute_conservation_check(
     constant_force = np.array([1.0, 0.8, 1.2])
     lagrangian_forces = constant_force + np.cross(omega, rel_pos)
 
-    total_force_lag = np.sum(lagrangian_forces * V_lag, axis=0)
+    total_force_lag = np.sum(lagrangian_forces * volumes[:, None], axis=0)
     total_torque_lag = np.sum(
-        np.cross(rel_pos, lagrangian_forces) * V_lag, axis=0
+        np.cross(rel_pos, lagrangian_forces) * volumes[:, None], axis=0
     )
     print(f"Lagrangian Total Force: {total_force_lag}")
     print(f"Lagrangian Total Torque: {total_torque_lag}")
@@ -153,7 +161,7 @@ def compute_conservation_check(
     contributions = (
         lagrangian_forces[marker_indices[valid]]
         * weights[valid, None]
-        * V_lag
+        * volumes[marker_indices[valid], None]
         / supports[valid, 3, None]
     )
     np.add.at(eulerian_forces, euler_indices[valid], contributions)

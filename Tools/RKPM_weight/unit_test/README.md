@@ -19,7 +19,8 @@ RKPM_TEST_PYTHON=/path/to/python \
   /path/to/IAMReX/Tools/RKPM_weight/unit_test/run_all_tests.sh
 ```
 
-NumPy is required for the core suite. The ML test is skipped if PyTorch or the
+NumPy and Matplotlib are required for the core suite, and SciPy >= 1.12 is
+required for `test_epsilon.py`. The ML test is skipped if PyTorch or the
 model files are unavailable. The MPMD test is skipped if either `mpiexec` or
 `mpi4py` is unavailable. `mpi4py` and `mpiexec` must use compatible MPI
 implementations for that test.
@@ -31,7 +32,18 @@ files under `fixtures/real_case/`.
 
 ## Test Details
 
-Twelve `test_*.py` files currently define nineteen `unittest` test methods.
+The suite includes local numerical checks and full-mapping regressions.
+
+### `test_epsilon.py`
+
+Checks the dimensional conversion against the legacy spread/interpolate
+operator, coupled solves against dense reference solutions, physical volume
+units, nonconvergence and negative-volume rejection. It also verifies that
+large eps can be stable for disjoint supports, that an exact constant-mode
+solution can still have unstable eigenvalues, and that redundant markers cannot
+be certified strictly contractive. File recomputation, planar-cloud generation,
+nonuniform-volume conservation, configuration precedence and the MPMD/ML
+restrictions are exercised through the production interfaces.
 
 ### `test_architecture_doc.py`
 

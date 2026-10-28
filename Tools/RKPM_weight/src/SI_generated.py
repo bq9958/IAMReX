@@ -55,7 +55,8 @@ def cylinder_area(radius, height):
 # center and z-axis rotation angle in degrees. Outputs include affected Eulerian points,
 # transformed Lagrangian points, nearest grid points, support parameters and all
 # per-marker support domains.
-def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, angle=0.0):
+def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, angle=0.0,
+                  *, estimate_volume=True):
 
     prob_lo = np.asarray(prob_lo, dtype=float)
     prob_hi = np.asarray(prob_hi, dtype=float)
@@ -118,12 +119,16 @@ def generate_grid(prob_lo, prob_hi, dx_finest, geometry_file=None, center=None, 
 
     # Estimate marker area and thickness.
     Ne = len(lagrangian_points)
-    area = ellipsoid_area_approx(ranges[0]/2, ranges[1]/2, ranges[2]/2) / Ne
-    # area = ellipsoid_area_approx(0.0437, 0.0437, 0.0655) / Ne
-    # area = cylinder_area(0.03815, 0.1145) / Ne
-    thickness = min(dx, dy, dz)
-    V_lag = area * thickness
-    print(f"Vl: {V_lag}, area:{area}, frac: {V_lag / cell_volume}")
+    if estimate_volume:
+        area = ellipsoid_area_approx(ranges[0]/2, ranges[1]/2, ranges[2]/2) / Ne
+        thickness = min(dx, dy, dz)
+        V_lag = area * thickness
+        print(f"Vl: {V_lag}, area:{area}, frac: {V_lag / cell_volume}")
+    else:
+        # A common volume factor cancels out of the corrected window solve.
+        # Use a neutral seed, including for planar point clouds, then solve A.
+        V_lag = cell_volume
+        print("[epsilon] Unit eps seed; marker volumes will be solved from A")
 
     # Find each marker's containing global cell.
     indices_ijk = containing_cell_indices(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 
@@ -49,6 +50,10 @@ CONFIG_VALUE_KEYS = {
     "check_interval": ("check_interval", int),
     "sum_tolerance": ("sum_tolerance", float),
     "moment_tolerance": ("moment_tolerance", float),
+    "volume_mode": ("volume_mode", str),
+    "epsilon_rtol": ("epsilon_rtol", float),
+    "epsilon_maxiter": ("epsilon_maxiter", int),
+    "epsilon_spectrum": ("epsilon_spectrum", None),
 }
 
 
@@ -133,6 +138,53 @@ def _save_mapping(id_map, lag_map, output_prefix):
     print(f"[file] Wrote {output_prefix}.id and {output_prefix}.lag")
 
 
+def _solve_file_weights(args, grid, solver, id_map, lag_map):
+    """Solve local RKPM weights, then optionally the coupled marker volumes."""
+    solve_volumes = args.volume_mode == "solve-epsilon"
+    if solve_volumes:
+        # The seed cancels from the corrected RKPM weights. Existing eps may
+        # even be absent/zero: it must not prescribe the matrix-solved volumes.
+        lag_map = mapping.replace_mapping_eps(lag_map, {mid: 1.0 for mid in lag_map})
+    started = time.perf_counter()
+    weights = solver.solve(id_map, lag_map)
+    print(f"[{solver.name}] Solve completed in {time.perf_counter()-started:.4f} s")
+    solved_lag = mapping.replace_mapping_weights(lag_map, weights)
+    result = None
+    if solve_volumes:
+        from src.epsilon import EpsilonSolveError, solve_epsilon
+
+        try:
+            result = solve_epsilon(
+                solved_lag, float(np.prod(grid.dx)), rtol=args.epsilon_rtol,
+                maxiter=args.epsilon_maxiter, spectrum=args.epsilon_spectrum,
+            )
+        except EpsilonSolveError as exc:
+            _save_epsilon_report(exc.result, args.output_prefix)
+            raise
+        solved_lag = mapping.replace_mapping_eps(
+            solved_lag, dict(zip(result.marker_ids, result.eps))
+        )
+        print(f"[epsilon] {json.dumps(result.diagnostics, sort_keys=True)}")
+        if args.epsilon_spectrum and not result.diagnostics["forcing_contracts"]:
+            print("[epsilon] WARNING: fixed-position forcing is not certified "
+                  "contractive; inspect the spectrum before CFD experiments")
+    return solved_lag, result
+
+
+def _save_epsilon_report(result, output_prefix):
+    if result is None:
+        return
+    path = Path(str(output_prefix) + ".epsilon.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report = dict(result.diagnostics)
+    report["markers"] = [
+        {"id": mid, "eps": float(eps), "V_lag": float(volume)}
+        for mid, eps, volume in zip(result.marker_ids, result.eps, result.volumes)
+    ]
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"[file] Wrote {path}")
+
+
 def _weights_in_support_order(solved_lag, all_S_I, grid):
     """Restore .lag-sorted weights to the original ``all_S_I`` point order."""
     result = []
@@ -180,6 +232,7 @@ def generate_from_geometry(args, grid, solver):
         args.geometry,
         center=center,
         angle=args.angle,
+        estimate_volume=args.volume_mode == "prescribed",
     )
 
     if center is None:
@@ -210,10 +263,11 @@ def generate_from_geometry(args, grid, solver):
         V_lag,
     )
 
-    started = time.perf_counter()
-    weights = solver.solve(id_map, lag_skeleton)
-    print(f"[{solver.name}] Solve completed in {time.perf_counter()-started:.4f} s")
-    solved_lag = mapping.replace_mapping_weights(lag_skeleton, weights)
+    solved_lag, epsilon_result = _solve_file_weights(
+        args, grid, solver, id_map, lag_skeleton
+    )
+    if epsilon_result is not None:
+        V_lag = epsilon_result.volumes
 
     weights_by_marker = _weights_in_support_order(solved_lag, all_S_I, grid)
     error.compute_error_volume(
@@ -228,10 +282,11 @@ def generate_from_geometry(args, grid, solver):
         V_lag,
     )
     _save_mapping(id_map, solved_lag, args.output_prefix)
+    _save_epsilon_report(epsilon_result, args.output_prefix)
 
 
 def recalculate_mapping(args, solver):
-    """Read positions and stencils from .id/.lag and recompute only weights."""
+    """Read .id/.lag and recompute weights and optionally marker volumes."""
     id_map = mapping.load_id_map(args.id_file)
     lag_map = mapping.load_lag_map(args.lag_file)
     marker_ids = mapping.validate_mapping_ids(id_map, lag_map)
@@ -240,11 +295,11 @@ def recalculate_mapping(args, solver):
         f"{args.id_file}, {args.lag_file}"
     )
 
-    started = time.perf_counter()
-    weights = solver.solve(id_map, lag_map)
-    print(f"[{solver.name}] Solve completed in {time.perf_counter()-started:.4f} s")
-    solved_lag = mapping.replace_mapping_weights(lag_map, weights)
+    solved_lag, epsilon_result = _solve_file_weights(
+        args, solver.grid, solver, id_map, lag_map
+    )
     _save_mapping(id_map, solved_lag, args.output_prefix)
+    _save_epsilon_report(epsilon_result, args.output_prefix)
 
 
 def run(args):
@@ -317,6 +372,26 @@ def parse_args(argv=None):
         choices=("file", "mpmd"),
         default=config_defaults.get("transport", "file"),
         help="Output transport: .id/.lag files or direct MPMD transfer (default: file)",
+    )
+    parser.add_argument(
+        "--volume-mode", choices=("prescribed", "solve-epsilon"),
+        default=config_defaults.get("volume_mode", "prescribed"),
+        help="Keep prescribed volumes or solve A eps = 1 (RKPM file mode only)",
+    )
+    parser.add_argument(
+        "--epsilon-rtol", type=float,
+        default=config_defaults.get("epsilon_rtol", 1.0e-8),
+        help="Relative residual tolerance for A eps = 1 (default: 1e-8)",
+    )
+    parser.add_argument(
+        "--epsilon-maxiter", type=int,
+        default=config_defaults.get("epsilon_maxiter", 1000),
+        help="Iteration limit for the epsilon solve and spectral diagnostics",
+    )
+    parser.add_argument(
+        "--epsilon-spectrum", action=argparse.BooleanOptionalAction,
+        default=config_defaults.get("epsilon_spectrum", False),
+        help="Also diagnose the fixed-position forcing spectrum (can be expensive)",
     )
     parser.add_argument(
         "--batch-size",
@@ -429,6 +504,19 @@ def parse_args(argv=None):
         parser.error("--solver must be either rkpm or ml")
     if args.transport not in {"file", "mpmd"}:
         parser.error("--transport must be either file or mpmd")
+    if args.volume_mode not in {"prescribed", "solve-epsilon"}:
+        parser.error("--volume-mode must be prescribed or solve-epsilon")
+    if (args.volume_mode == "solve-epsilon"
+            and (args.solver != "rkpm" or args.transport != "file")):
+        parser.error(
+            "--volume-mode solve-epsilon requires --solver rkpm --transport file; "
+            "the MPMD protocol cannot transfer updated eps"
+        )
+    if (not np.isfinite(args.epsilon_rtol)
+            or args.epsilon_rtol <= 0.0 or args.epsilon_maxiter <= 0):
+        parser.error("--epsilon-rtol and --epsilon-maxiter must be finite and positive")
+    if args.epsilon_spectrum and args.volume_mode != "solve-epsilon":
+        parser.error("--epsilon-spectrum requires --volume-mode solve-epsilon")
     if (
         args.transport == "file"
         and args.geometry is not None
