@@ -19,6 +19,7 @@ flowchart TB
         RunConfig["Runtime configuration<br/>solver, transport and explicit geometry frame"]
         AMReXInputs["AMReX inputs file<br/>domain, cells, AMR level"]
         Geometry["Point-cloud geometry<br/>N markers x 3, body or world frame"]
+        EllipsoidPoints["generate_ellipsoid_points.py<br/>E3 repulsion and area diagnostics"]
         MappingFiles["Mapping files<br/>.id positions and .lag stencils"]
         ModelFiles["Transolver assets<br/>model code, checkpoint, statistics"]
         IAMReX["IAMReX DiffusedIB_Parallel<br/>C++ MPI application"]
@@ -68,6 +69,7 @@ flowchart TB
     Main --> RecomputeMode
     Main --> Transport
 
+    EllipsoidPoints --> Geometry
     Geometry --> GeometryMode --> SupportGeneration --> Mapping
     RecomputeMode --> Mapping
     MappingFiles --> RecomputeMode
@@ -153,6 +155,7 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `main.py` | Parse configuration, construct the grid and solver, and dispatch file or MPMD execution. |
+| `generate_ellipsoid_points.py` | Standalone NumPy/SciPy CLI: default `--method riesz3` minimizes pair E3 repulsion with a blocked analytic gradient and angularly constrained L-BFGS-B (default limit 3000). `--method centroid` retains the previous sampled-centroid comparison (default limit 80). Write exactly N coordinate rows under `# X Y Z`. Independent replicated sampling estimates Euclidean surface-Voronoi areas; `.areas.csv/.json` report per-marker areas, deviations from S/N, quadrature uncertainty and explicit optimizer status. `--area-samples-per-point` and `--area-replicates` control integration; optional `--plot-areas` adds a Matplotlib histogram/spatial plot. It produces geometry and area diagnostics, without solving RKPM weights. |
 | `src/SI_generated.py` | Read and transform geometry, estimate marker volume, and construct vectorized support domains. |
 | `src/grid_index.py` | Apply the shared grid-line snapping convention and compute containing-cell indices. |
 | `src/mapping.py` | Read, validate, build, update and write `.id/.lag` mappings. |

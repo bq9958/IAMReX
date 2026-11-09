@@ -73,6 +73,82 @@ python3 main.py --config /path/to/case/inputs.rkpm \
 The configuration controls the Python weight service. The IAMReX executable,
 MPI rank counts and `IAMReX_MPMD=1` remain part of the `mpiexec` command.
 
+## Ellipsoid Surface Points
+
+Generate exactly N markers on an axis-aligned ellipsoid before building RKPM
+mappings. This standalone script requires NumPy and SciPy:
+
+```bash
+python3 generate_ellipsoid_points.py --num-points 512 \
+  --axes 0.04 0.06 0.04 --output ellipsoid_512_points.txt
+```
+
+`--axes A B C` specifies **semi-axis lengths**, not diameters. The center is
+`(0,0,0)` by default, suitable for body-coordinate geometry; use
+`--center X Y Z` to translate the output. All coordinates use the units of the
+axes. Output has the same format as `Tutorials/RKPM/test_cylinder_centers.txt`:
+the header `# X Y Z`, then N rows of three coordinates, without IDs or a count.
+Numbers retain 17 significant digits.
+
+The default `--method riesz3` minimizes the repulsive energy
+`E3 = sum_{i<j} 1/r_ij^3`, whose force magnitude is proportional to `1/r^4`.
+It starts from physical-area samples using the ellipsoid Jacobian, then uses
+L-BFGS-B with an analytic gradient. An angular parameterization keeps all points
+on the ellipsoid throughout optimization. Pair distances are measured in physical
+Euclidean space, scaled by the largest semi-axis for numerical conditioning.
+Mean-pair energy normalization does not change the minimizer. Every pair is
+included; blocked evaluation uses O(N^2) work and O(256*N) temporary storage per
+objective/gradient evaluation. This seeks a local energy minimum, without
+certifying a global minimum, exactly equal areas, or positive solved epsilon.
+
+`--iterations` defaults to 3000 for E3 (`0` disables optimization), and `--seed`
+defaults to 0 for reproducible initial points. The console and `.areas.json`
+report the stopping status, iterations, initial/final normalized energy and
+angular gradient. A finite candidate is still written if an iteration limit or
+other stopping failure occurs, with `converged=false` and an explicit warning.
+Inspect the candidate or increase the limit rather than treating it as converged.
+Try multiple seeds when comparing local minima.
+
+The previous sampled-centroid method is available explicitly as
+`--method centroid`. It moves markers toward surface Voronoi centroids in
+tangent directions and projects back onto the ellipsoid. Its default iteration
+limit is 80; `--samples-per-point` controls its integration density (default 64).
+That option does not control E3 optimization or the independent area measurement.
+Centroid relaxation uses O(M+N) storage and approximately O(M log N) work per
+iteration for M integration samples. Both methods preserve the exact point count
+and print nearest-neighbor spacing statistics.
+
+Every run also writes `<output-stem>.areas.csv` and `.areas.json`. The CSV keeps
+the coordinate-file order (zero-based IDs) and lists coordinates, each marker's
+representative area, ideal uniform area `S/N`, their ratio, percentage deviation
+and an estimated area standard error. JSON records total surface area, min/mean/
+max/RMS/std, area CV, relative RMS and maximum deviation from `S/N`, percentiles,
+a histogram, fractions within 5/10/20%, quadrature diagnostics and optimization
+status. E3 energy/gradient values use coordinates divided by the reported
+`energy_coordinate_scale` (the largest semi-axis).
+
+Areas refer to **surface Voronoi cells using Euclidean nearest-marker distance**,
+not a triangulation or intrinsic geodesic cells. An independent set of area-uniform
+samples measures each cell's fraction of the full smooth ellipsoid area. The
+full area uses SciPy's [Carlson elliptic integral formula](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.elliprg.html).
+The estimates sum to S by construction; their mean alone does not establish
+uniformity. The relative RMS deviation from `S/N` equals the area CV; zero is
+ideal. The raw area RMS is a different, dimensional quantity.
+
+Area measurement uses `--area-samples-per-point 1024` total samples per marker
+(at least 65536 overall), divided across `--area-replicates 4` independent
+scrambles. These samples are separate from relaxation, avoiding evaluation on
+the same quadrature used to optimize the markers. Reported replicate variation
+estimates quadrature uncertainty; it is not a rigorous confidence interval.
+Increase the sample count to check area/statistic convergence. Integration is
+chunked to bound temporary sample storage.
+
+Add `--plot-areas` to save `.areas.png` with an area-ratio histogram and a 3D
+map colored by local percentage deviation. Only plotting requires Matplotlib.
+
+Pass the resulting text file to `main.py --geometry` with `--body-frame` for
+body coordinates or `--world-frame` for coordinates already placed in the domain.
+
 ## File Mode
 
 Build new stencils and mappings from a point cloud:
