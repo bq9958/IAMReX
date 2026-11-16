@@ -80,6 +80,7 @@ namespace ParticleProperties{
     GpuArray<Real, 3> plo{0.0,0.0,0.0}, phi{0.0,0.0,0.0}, dx{0.0, 0.0, 0.0};
 
     int RKPM{0};
+    std::string marker_file{};
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -636,10 +637,16 @@ void mParticle::InitParticles(const Vector<Real>& x,
         !(has_prescribed_fin && ParticleProperties::RKPM != 0),
         "Prescribed fins do not support RKPM markers");
 
-    if (ParticleProperties::RKPM != 0) {
-        // RKPM only one particle
-        do_RKPM = true;
-        ResolveLagrangianMarker("rkpm_mappings.id");
+    do_RKPM = ParticleProperties::RKPM != 0;
+    use_marker_file = do_RKPM || !ParticleProperties::marker_file.empty();
+
+    if (use_marker_file) {
+        const auto filename = ParticleProperties::marker_file.empty()
+            ? std::string("rkpm_mappings.id")
+            : ParticleProperties::marker_file;
+        ResolveLagrangianMarker(filename);
+    }
+    if (do_RKPM) {
         ResolveWithRPKM("rkpm_mappings.lag");
     }
 
@@ -753,7 +760,7 @@ void mParticle::InitParticles(const Vector<Real>& x,
 
         mKernel.Vp = Math::pi<Real>() * 4 / 3 * Math::powi<3>(radius[real_index]);
 
-        if (ParticleProperties::RKPM == 0) {
+        if (!use_marker_file) {
             const Real eps_target = ParticleProperties::eps_target;
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
                 std::isfinite(eps_target) && eps_target > 0.0,
@@ -771,7 +778,7 @@ void mParticle::InitParticles(const Vector<Real>& x,
             const int Ml = static_cast<int>(marker_count);
 
             Real dv = (Math::powi<3>(mKernel.radius - (ParticleProperties::rd - 0.5) * h)
-                   - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*Ml/4./Math::pi<Real>());
+                - Math::powi<3>(mKernel.radius - (ParticleProperties::rd + 0.5) * h))/(3.*Ml/4./Math::pi<Real>());
             mKernel.ml = Ml;
             mKernel.dv = dv;
             if( Ml > max_largrangian_num ) max_largrangian_num = Ml;
@@ -800,9 +807,14 @@ void mParticle::InitParticles(const Vector<Real>& x,
                                         << "), Velocity : (" << mKernel.velocity[0] << ", " << mKernel.velocity[1] << ", "<< mKernel.velocity[2]
                                         << "), Radius: " << mKernel.radius << ", Radius2: " << mKernel.radius2 << ", Radius3: " << mKernel.radius3 << ", Ml: " << Ml << ", dv: " << dv << ", Rho: " << mKernel.rho
                                         << ", eps_target: " << eps_target << ", eps_actual: " << dv / (h*h*h) << "\n";
-        }else {
+        }else { // use_marker_file
             mKernel.ml = NumOfLagrangianMarker(index);
-            mKernel.dv = RKPM_MAP.at(index)[0].eps;
+
+            if (do_RKPM) {
+                mKernel.dv = RKPM_MAP.at(index)[0].eps;  // volume ratio
+            } else {
+                mKernel.dv = ParticleProperties::eps_target * h * h * h;  // real physical volume
+            }
         }
 
         particle_kernels.emplace_back(mKernel);
@@ -872,11 +884,11 @@ void mParticle::UpdateLagrangianMarker() {
         auto *const mzP_ptr = attri[P_ATTR_REAL::Mz_Marker].data();
 
         const auto *const ps = d_kernels.data();
-        const bool do_RKPM_l = do_RKPM;
+        const bool use_marker_file_l = use_marker_file;
 
         ParallelFor(np,
             [=] AMREX_GPU_DEVICE (const int i) noexcept {
-                if (!do_RKPM_l) {
+                if (!use_marker_file_l) {
                     const auto id = ids[i];
                     const auto m_id = particles[i].id();
                     const auto location = ps[id].location;
@@ -2175,7 +2187,7 @@ void Particles::create_particles(const Geometry &gm,
     int marker_index = 0;
     {
         for (auto& cur_p: particle->particle_kernels){
-            if (particle->do_RKPM) {
+            if (particle->use_marker_file) {
                 cur_p.start_id = particle->StartOfLagrangianMarker(cur_p.id);
             }else {
                 cur_p.start_id = marker_index;
@@ -2192,7 +2204,7 @@ void Particles::create_particles(const Geometry &gm,
                 markerP.pos(0) = cur_p.location[0];
                 markerP.pos(1) = cur_p.location[1];
                 markerP.pos(2) = cur_p.location[2];
-                if (particle->do_RKPM) {
+                if (particle->use_marker_file) {
                     auto pos = particle->GetPositionOfMarker(i + cur_p.start_id);
                     markerP.pos(0) = pos[0];
                     markerP.pos(1) = pos[1];
@@ -2438,6 +2450,7 @@ void Particles::Initialize()
         p_file.query("pvf_method", ParticleProperties::pvf_method);
         // update with RKPM method
         p_file.query("RKPM", ParticleProperties::RKPM);
+        p_file.query("marker_file", ParticleProperties::marker_file);
 
         ParmParse ns("ns");
         ns.get("fluid_rho",      ParticleProperties::euler_fluid_rho);

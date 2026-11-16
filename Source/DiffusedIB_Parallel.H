@@ -449,6 +449,7 @@ public:
     // read write
     bool do_RKPM{false};
     bool m_mpmd_exchange_done{false};
+    bool use_marker_file{false};
 };
 
 /// @}
