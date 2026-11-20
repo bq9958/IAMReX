@@ -228,7 +228,7 @@ public:
      * @param RLY Vector of rotational constraint flags in y-direction
      * @param RLZ Vector of rotational constraint flags in z-direction
      * @param radius Vector of particle radii
-     * @param h Grid spacing
+     * @param dx Grid spacing in each direction on the particle level
      * @param gravity Gravitational acceleration
      * @param verbose Verbosity level for output
      */
@@ -252,7 +252,7 @@ public:
                        const Vector<Real>& radius2,
                        const Vector<Real>& radius3,
                        const Vector<int>& geometry_type,
-                       Real h,
+                       const GpuArray<Real, AMREX_SPACEDIM>& dx,
                        Real gravity,
                        int verbose = 0);
 
@@ -462,8 +462,8 @@ public:
                                  const BoxArray & ba);
 
     static mParticle* get_particles();
-    static void init_particle(Real gravity, Real h);
-    static void Restart(Real gravity, Real h, int iStep);
+    static void init_particle(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx);
+    static void Restart(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx, int iStep);
     static void Initialize();
     static int ParticleFinestLevel();;
 

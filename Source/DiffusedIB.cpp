@@ -1124,7 +1124,7 @@ mParticle* Particles::get_particles()
 }
 
 
-void Particles::init_particle(Real gravity, Real h)
+void Particles::init_particle(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx)
 {
     amrex::Print() << "[Particle] : create Particle's kernel\n";
     particle = new mParticle;
@@ -1151,14 +1151,14 @@ void Particles::init_particle(Real gravity, Real h)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
-            h,
+            dx[0],
             gravity,
             ParticleProperties::verbose);
     }
 
 }
 
-void Particles::Restart(Real gravity, Real h, int iStep)
+void Particles::Restart(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx, int iStep)
 {
     amrex::Print() << "[Particle] : restart Particle's kernel, step :" << iStep << "\n"
                    << "\tstart read particle csv file , default name is IB_Particle_x.csv\n"
@@ -1186,7 +1186,7 @@ void Particles::Restart(Real gravity, Real h, int iStep)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
-            h,
+            dx[0],
             gravity,
             ParticleProperties::verbose);
     //deal in IO processor

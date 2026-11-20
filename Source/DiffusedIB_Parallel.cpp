@@ -44,7 +44,7 @@ namespace ParticleProperties{
     Vector<Real> _radius3;
     Vector<int> _geometry_type;
     Real rd{0.0};
-    Real eps_target{1.0};  // Non-RKPM target ratio of marker volume to h^3.
+    Real eps_target{1.0};  // Non-RKPM target marker volume ratio.
     Vector<int> TLX{}, TLY{},TLZ{},RLX{},RLY{},RLZ{};
     int euler_finest_level{0};
     int euler_velocity_index{0};
@@ -615,10 +615,11 @@ void mParticle::InitParticles(const Vector<Real>& x,
                               const Vector<Real>& radius2,
                               const Vector<Real>& radius3,
                               const Vector<int>& geometry_type,
-                              Real h,
+                              const GpuArray<Real, AMREX_SPACEDIM>& dx,
                               Real gravity,
                               int _verbose)
 {
+    const Real h = dx[0];
     verbose = _verbose;
     if (verbose) Print() << "[Particle] mParticle::InitParticles\n";
 
@@ -813,7 +814,7 @@ void mParticle::InitParticles(const Vector<Real>& x,
             if (do_RKPM) {
                 mKernel.dv = RKPM_MAP.at(index)[0].eps;  // volume ratio
             } else {
-                mKernel.dv = ParticleProperties::eps_target * h * h * h;  // real physical volume
+                mKernel.dv = ParticleProperties::eps_target * dx[0] * dx[1] * dx[2];
             }
         }
 
@@ -2256,7 +2257,7 @@ mParticle* Particles::get_particles()
     return particle;
 }
 
-void Particles::init_particle(Real gravity, Real h)
+void Particles::init_particle(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx)
 {
     BL_PROFILE("Particles::init_particle");
     Print() << "[Particle] : create Particle's kernel\n";
@@ -2284,14 +2285,14 @@ void Particles::init_particle(Real gravity, Real h)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
-            h,
+            dx,
             gravity,
             ParticleProperties::verbose);
     }
 
 }
 
-void Particles::Restart(Real gravity, Real h, int iStep)
+void Particles::Restart(Real gravity, const GpuArray<Real, AMREX_SPACEDIM>& dx, int iStep)
 {
     Print() << "[Particle] : restart Particle's kernel, step :" << iStep << "\n"
                    << "\tstart read particle csv file , default name is IB_Particle_x.csv\n"
@@ -2319,7 +2320,7 @@ void Particles::Restart(Real gravity, Real h, int iStep)
             ParticleProperties::_radius2,
             ParticleProperties::_radius3,
             ParticleProperties::_geometry_type,
-            h,
+            dx,
             gravity,
             ParticleProperties::verbose);
     //deal in IO processor

@@ -368,7 +368,7 @@ void NavierStokesBase::define_workspace()
         if (level == Particles::ParticleFinestLevel()) {
             if(!Particles::isInitial){
                 //particles
-                Particles::init_particle(gravity, geom.CellSizeArray()[0]);
+                Particles::init_particle(gravity, geom.CellSizeArray());
             }
             //largra
             Particles::create_particles(geom, dmap, grids); // Class constructor
@@ -2901,7 +2901,7 @@ NavierStokesBase::restart (Amr&          papa,
 #ifdef AMREX_PARTICLES
     if(level == Particles::ParticleFinestLevel())
     {
-        Particles::Restart(gravity, geom.CellSizeArray()[0],parent->levelSteps(0));
+        Particles::Restart(gravity, geom.CellSizeArray(), parent->levelSteps(0));
         ParallelDescriptor::Barrier();
     }
 #endif
